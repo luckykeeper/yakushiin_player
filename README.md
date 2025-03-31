@@ -12,7 +12,7 @@
 
 ## 使用
 
-和 [luckykeeper/OAPlayer](https://github.com/luckykeeper/OAPlayer) 一样，仍然需要自行实现后端（以及管理工具），后端和管理工具暂不开源，后端网关名字叫 [NoaHandler](https://cocoa.xin/article/71/#架构设计) ，使用者需要自行实现该网关的部分功能（音乐管理模块），具体需要实现的部分介绍如下
+和 [luckykeeper/OAPlayer](https://github.com/luckykeeper/OAPlayer) 一样，仍然需要自行实现后端（以及管理工具），后端和管理工具暂不开源，后端网关名字叫 [NoaHandler](https://blog.cocoa.xin/article/71/#架构设计) ，使用者需要自行实现该网关的部分功能（音乐管理模块），具体需要实现的部分介绍如下
 
 只需要实现如下一个接口即可
 
@@ -45,6 +45,8 @@ type AppRequest struct {
 **接口定义**：（Go）
 
 > 如果你和我一样喜欢用 xorm ，直接复制即可自动建表
+>
+> 在 `NoaPlayerV2Music` 里面，字幕相关的四个字段可空
 
 ```go
 type NoaPlayerV2Msg struct {
@@ -173,7 +175,7 @@ type NoaPlayerV2PlayList struct {
 
 在应用自己的 Document 文件夹下
 
-4、最低支持的安卓版本
+### 4、最低支持的安卓版本
 
 NDK 27 ，也就是 Android 8.1
 
