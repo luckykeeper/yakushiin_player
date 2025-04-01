@@ -177,7 +177,11 @@ type NoaPlayerV2PlayList struct {
 
 ### 4、最低支持的安卓版本
 
-NDK 27 ，也就是 Android 8.1
+最低 SDK 版本 21 (Android 5)
+
+目标 SDK 版本 35 (Android 15)
+
+NDK 版本 27      (Android 8.1)
 
 ## 其他
 
