@@ -54,6 +54,7 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
   int nowPlayingIndex = 0;
   double currentVolumePlayer = 100;
   double currentVolumeSystem = 0;
+  Timer? checkPlayListEndTimer;
 
   // 硬件音频
   AudioStream _audioStream = AudioStream.music;
@@ -449,6 +450,29 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
         if (mounted) {
           setState(() {});
         }
+
+        // 如果是最后一首时的处理，暂定方法，当暂停时检测是不是放完了
+
+        if (nowPlayingIndex + 1 ==
+            ref.watch(currentPlayList).musicList?.length) {
+          yakushiinLogger.d("已经到达最后一首，启动检查定时器");
+          checkPlayListEndTimer = Timer.periodic(Durations.medium1, (
+            timer,
+          ) async {
+            if (nowPlayingStatus == false) {
+              if (nowPlayingDurationTotal.inSeconds -
+                      nowPlayingDurationCurrent.inSeconds <=
+                  1) {
+                yakushiinLogger.d("最后一首播放完成，回到第一首并取消检查定时器");
+                await yakushiinPlayer.jump(0);
+                checkPlayListEndTimer?.cancel();
+              }
+            } else {}
+          });
+        } else {
+          // 如果不是最后一首，或者从最后一首返回，取消可能存在的定时器
+          checkPlayListEndTimer?.cancel();
+        }
       });
 
       yakushiinPlayer.stream.duration.listen((Duration duration) {
@@ -617,6 +641,7 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
     }
     FlutterVolumeController.removeListener();
     getLocationAndWeatherTimer?.cancel();
+    checkPlayListEndTimer?.cancel();
     super.dispose();
   }
 
@@ -778,39 +803,51 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                             "${currentWeather?.humidity?.toInt()}%",
                             style: styleFontSimkaiBoldLarge,
                           ),
+                          Text(
+                            "${currentWeather?.windSpeed?.toInt()} m/s",
+                            style: styleFontSimkaiBoldLarge,
+                          ),
                         ],
                       ),
                       VerticalDivider(),
-                      SizedBox(
-                        width: 50,
-                        height: 50,
-                        child: WeatherIconWidget(
-                          iconCode: "${currentWeather?.weatherIcon}",
-                        ),
+                      Column(
+                        children: [
+                          SizedBox(
+                            width: 50,
+                            height: 50,
+                            child: WeatherIconWidget(
+                              iconCode: "${currentWeather?.weatherIcon}",
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
               ],
             ),
             const Divider(),
-            SizedBox(
-              width: MediaQuery.of(context).size.width,
-              height: MediaQuery.of(context).size.width * 9.0 / 16.0,
-              child: Video(
-                controller: yakushiinPlayerController,
-                subtitleViewConfiguration: const SubtitleViewConfiguration(
-                  style: TextStyle(
-                    height: 1.4,
-                    fontSize: 60.0,
-                    letterSpacing: 0.0,
-                    wordSpacing: 0.0,
-                    color: Color(0xffffffff),
-                    fontWeight: FontWeight.normal,
-                    fontFamily: fontSimkaiFamily,
-                    backgroundColor: Color(0xaa000000),
+            SafeArea(
+              child: SizedBox(
+                width: MediaQuery.of(context).size.width,
+                height: MediaQuery.of(context).size.width * 9.0 / 16.0,
+                child: Video(
+                  controller: yakushiinPlayerController,
+                  subtitleViewConfiguration: const SubtitleViewConfiguration(
+                    style: TextStyle(
+                      height: 1.4,
+                      fontSize: 60.0,
+                      letterSpacing: 0.0,
+                      wordSpacing: 0.0,
+                      color: Color(0xffffffff),
+                      fontWeight: FontWeight.normal,
+                      fontFamily: fontSimkaiFamily,
+                      backgroundColor: Color(0xaa000000),
+                    ),
+                    textAlign: TextAlign.center,
+                    padding: EdgeInsets.fromLTRB(16.0, 24.0, 16.0, 0.0),
                   ),
-                  textAlign: TextAlign.center,
-                  padding: EdgeInsets.fromLTRB(16.0, 24.0, 16.0, 0.0),
+                  pauseUponEnteringBackgroundMode: true,
+                  resumeUponEnteringForegroundMode: true,
                 ),
               ),
             ),
@@ -842,7 +879,13 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                     ),
                 ElevatedButton.icon(
                   onPressed: () async {
-                    await yakushiinPlayer.next();
+                    if (nowPlayingIndex + 1 ==
+                        ref.watch(currentPlayList).musicList?.length) {
+                      // 播放列表尾
+                      await yakushiinPlayer.jump(0);
+                    } else {
+                      await yakushiinPlayer.next();
+                    }
                   },
                   label: Text("下一曲", style: styleFontSimkai),
                   icon: Icon(Icons.skip_next),

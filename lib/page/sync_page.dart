@@ -14,6 +14,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_msg.dart';
 import 'package:yakushiin_player/model/runtime.dart';
+import 'package:yakushiin_player/model/version.dart';
 import 'package:yakushiin_player/model/yakushiin_logger.dart';
 import 'package:yakushiin_player/subfunction/get_total_size_of_files_in_dir.dart';
 import 'package:yakushiin_player/theme/font.dart';
@@ -35,6 +36,7 @@ class _SyncPlayListPageState extends State<SyncPlayListPage> {
   String nowHandlingName = "N/a";
   String gatewayMusicTotal = "未获取";
   String localCacheSize = "N/a";
+  double? downloadProgress;
 
   updateInfo() async {
     if (yakushiinRuntimeEnvironment.dataEngineForV2PlayList.length > 0) {
@@ -104,8 +106,16 @@ class _SyncPlayListPageState extends State<SyncPlayListPage> {
       await yakushiinRequestClient.download(
         url,
         "${yakushiinRuntimeEnvironment.cacheDir.path}${Platform.pathSeparator}$md5",
+        queryParameters: yakushininPlayerUserAgentMap,
+        onReceiveProgress: (int received, int total) async {
+          setState(() {
+            downloadProgress = received / total;
+          });
+        },
       );
-
+      setState(() {
+        downloadProgress = null;
+      });
       if (!await yakushiinRuntimeEnvironment.musicDir.exists()) {
         await yakushiinRuntimeEnvironment.musicDir.create();
       }
@@ -261,6 +271,56 @@ class _SyncPlayListPageState extends State<SyncPlayListPage> {
               ),
             ],
           ),
+          if (downloadProgress != null)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "当前歌曲下载进度👇",
+                  style: TextStyle(
+                    fontFamily: "simkai",
+                    color: Colors.green[300],
+                    overflow: TextOverflow.clip,
+                  ),
+                ),
+              ],
+            ),
+          if (downloadProgress != null)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                LinearProgressIndicator(
+                  value: downloadProgress,
+                  backgroundColor: Colors.pinkAccent,
+                ),
+              ],
+            ),
+          if (localMusicCount != 0 &&
+              (localMusicCacheCount / localMusicCount != 1))
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "总体下载进度👇",
+                  style: TextStyle(
+                    fontFamily: "simkai",
+                    color: Colors.green[300],
+                    overflow: TextOverflow.clip,
+                  ),
+                ),
+              ],
+            ),
+          if (localMusicCount != 0 &&
+              (localMusicCacheCount / localMusicCount != 1))
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                LinearProgressIndicator(
+                  value: localMusicCacheCount / localMusicCount,
+                  backgroundColor: Colors.pinkAccent,
+                ),
+              ],
+            ),
           Container(height: 20),
           Row(
             children: [

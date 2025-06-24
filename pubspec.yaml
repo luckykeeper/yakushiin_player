@@ -71,7 +71,7 @@ flutter:
     #       weight: 300
     - family: simkai
       fonts:
-        - asset: assets/fonts/simkai.ttf
+        - asset: lib/theme/fonts/simkai.ttf
         
 flutter_native_splash:
   color: "#79c4be"
