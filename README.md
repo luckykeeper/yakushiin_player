@@ -185,6 +185,10 @@ NDK 版本 27      (Android 8.1)
 
 ## 其他
 
-大小姐可爱捏~
+1、如果视频没有双语歌词支持，可以从音乐平台下载双语歌词 lrc 文件并转换成 srt 格式，格式是非标格式，网上没有现成可用的工具，我写了一个
+
+[luckykeeper/yakushiinL2S: 将双语 lrc 歌词文件转 srt 字幕文件，双语时间轴合并，luckykeeper/yakushiin_player 最佳搭档](https://github.com/luckykeeper/yakushiinL2S)
+
+2、大小姐可爱捏~
 
 <img src="./assets/images/operationFailedYakushiin.jpg" style="zoom: 50%;" /><img src="./assets/images/operationSuccessYakushiin.jpg" style="zoom: 50%;" />
