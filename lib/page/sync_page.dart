@@ -38,7 +38,7 @@ class _SyncPlayListPageState extends State<SyncPlayListPage> {
   String localCacheSize = "N/a";
   double? downloadProgress;
 
-  updateInfo() async {
+  Future<void> updateInfo() async {
     if (yakushiinRuntimeEnvironment.dataEngineForV2PlayList.length > 0) {
       try {
         NoaPlayerV2Msg localPlayList = NoaPlayerV2Msg(playList: []);

@@ -55,6 +55,7 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
   double currentVolumePlayer = 100;
   double currentVolumeSystem = 0;
   Timer? checkPlayListEndTimer;
+  Timer? checkPlayingMusicEndTimer;
 
   // 硬件音频
   AudioStream _audioStream = AudioStream.music;
@@ -89,11 +90,11 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
     pedometerTimeStampStatusChanged = event.timeStamp;
   }
 
-  void onPedestrianStatusError(error) {
+  void onPedestrianStatusError(Object error) {
     yakushiinLogger.e("onPedestrianStatusError:$error");
   }
 
-  void onStepCountError(error) {
+  void onStepCountError(Object error) {
     yakushiinLogger.e("onStepCountError:$error");
   }
 
@@ -135,7 +136,7 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
   // 天气
   String yakushiinWeatherApiKey = "";
   Weather? currentWeather;
-  getCurrentLocationAndWeather() async {
+  Future<void> getCurrentLocationAndWeather() async {
     try {
       yakushiinWeatherApiKey =
           yakushiinRuntimeEnvironment.dataEngineForGatewaySetting
@@ -349,8 +350,7 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
         );
         nowPlayingMusicName =
             "${ref.watch(currentPlayList).musicList![playList.index].videoName}";
-        if (playList.index + 1 <=
-            ref.watch(currentPlayList).musicList!.length) {
+        if (playList.index + 1 < ref.watch(currentPlayList).musicList!.length) {
           nextPlayingMusicName =
               "${ref.watch(currentPlayList).musicList![playList.index + 1].videoName}";
         } else {
@@ -408,7 +408,15 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                 ),
               );
             }
+          } else {
+            // 没有字幕的清掉所有字幕
+            // yakushiinLogger.d("没有字幕，清除掉当前字幕轨");
+            await yakushiinPlayer.setSubtitleTrack(SubtitleTrack.no());
           }
+        } else {
+          // 没有字幕的清掉所有字幕
+          // yakushiinLogger.d("没有字幕，清除掉当前字幕轨");
+          await yakushiinPlayer.setSubtitleTrack(SubtitleTrack.no());
         }
         // 更新播放状态到数据库
         for (var i = 0; i < ref.read(currentPlayList).musicList!.length; i++) {
@@ -449,29 +457,6 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
         );
         if (mounted) {
           setState(() {});
-        }
-
-        // 如果是最后一首时的处理，暂定方法，当暂停时检测是不是放完了
-
-        if (nowPlayingIndex + 1 ==
-            ref.watch(currentPlayList).musicList?.length) {
-          yakushiinLogger.d("已经到达最后一首，启动检查定时器");
-          checkPlayListEndTimer = Timer.periodic(Durations.medium1, (
-            timer,
-          ) async {
-            if (nowPlayingStatus == false) {
-              if (nowPlayingDurationTotal.inSeconds -
-                      nowPlayingDurationCurrent.inSeconds <=
-                  1) {
-                yakushiinLogger.d("最后一首播放完成，回到第一首并取消检查定时器");
-                await yakushiinPlayer.jump(0);
-                checkPlayListEndTimer?.cancel();
-              }
-            } else {}
-          });
-        } else {
-          // 如果不是最后一首，或者从最后一首返回，取消可能存在的定时器
-          checkPlayListEndTimer?.cancel();
         }
       });
 
@@ -553,6 +538,45 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
             nowPlayingDurationCurrent = position;
           });
         }
+        // 播放结束但是不能自动下一曲卡住时候的处理
+        if ((nowPlayingDurationTotal - nowPlayingDurationCurrent <
+                Durations.short4) &&
+            (nowPlayingDurationCurrent > Durations.long4)) {
+          // 起一个计时器，如果2秒之后没有切到下一首，就手动切一下，如果是最后一首，就切到第一首
+          checkPlayingMusicEndTimer ??= Timer(
+            Duration(milliseconds: 1),
+            () async {
+              yakushiinLogger.d(
+                "定时器启动: $nowPlayingMusicName 播放结束=>($nowPlayingDurationCurrent==$nowPlayingDurationTotal)",
+              );
+              if (!mounted) {
+                checkPlayingMusicEndTimer?.cancel();
+                return;
+              }
+              Timer(Duration(seconds: 2), () async {
+                if (!mounted) {
+                  checkPlayingMusicEndTimer?.cancel();
+                  return;
+                }
+                if ((nowPlayingDurationTotal - nowPlayingDurationCurrent <
+                        Durations.short4) &&
+                    (nowPlayingDurationCurrent > Durations.long4)) {
+                  if (nowPlayingIndex + 1 ==
+                      ref.watch(currentPlayList).musicList?.length) {
+                    // 播放列表尾
+                    yakushiinLogger.d("播放将结束回调=>播放列表尾置头");
+                    await yakushiinPlayer.jump(0);
+                  } else {
+                    yakushiinLogger.d("播放将结束回调=>下一曲");
+                    await yakushiinPlayer.next();
+                  }
+                }
+                checkPlayingMusicEndTimer?.cancel();
+                checkPlayingMusicEndTimer = null;
+              });
+            },
+          );
+        }
       });
 
       yakushiinPlayer.stream.audioDevice.listen((AudioDevice device) {
@@ -565,6 +589,8 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
 
       yakushiinPlayer.stream.error.listen((String error) {
         yakushiinLogger.e("播放器发生错误：$error");
+        checkPlayingMusicEndTimer?.cancel();
+        checkPlayingMusicEndTimer = null;
       });
     });
   }
@@ -642,6 +668,7 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
     FlutterVolumeController.removeListener();
     getLocationAndWeatherTimer?.cancel();
     checkPlayListEndTimer?.cancel();
+    checkPlayingMusicEndTimer?.cancel();
     super.dispose();
   }
 
@@ -694,7 +721,7 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
             Column(
               children: [
                 Text(
-                  "当前播放列表:${ref.watch(currentPlayList).playListName}",
+                  "当前播放列表:${ref.watch(currentPlayList).playListName} (${nowPlayingIndex + 1}/${ref.watch(currentPlayList).musicList?.length == null ? "N/a" : ref.watch(currentPlayList).musicList!.length})",
                   style: styleFontSimkaiBoldLarge,
                 ),
               ],
@@ -702,18 +729,24 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
             const Divider(),
             Column(
               children: [
-                Text(
-                  "下一曲：$nextPlayingMusicName",
-                  style: styleFontSimkaiBoldLarge,
+                SizedBox(
+                  height: 50,
+                  child: Text(
+                    "当前音乐：$nowPlayingMusicName",
+                    style: styleFontSimkaiBoldLarge,
+                  ),
                 ),
               ],
             ),
             const Divider(),
             Column(
               children: [
-                Text(
-                  "当前音乐：$nowPlayingMusicName",
-                  style: styleFontSimkaiBoldLarge,
+                SizedBox(
+                  height: 30,
+                  child: Text(
+                    "下一曲：$nextPlayingMusicName",
+                    style: styleFontSimkaiBoldLarge,
+                  ),
                 ),
               ],
             ),

@@ -26,7 +26,7 @@ var yakushiinLoggerInstance = YakushiinLogger();
 class YakushiinLogger extends LogOutput {
   File? yakushiinLogFile;
   bool enabledWriteLocal = false;
-  loggerInit() async {
+  Future<void> loggerInit() async {
     yakushiinLogger.i(
       "isDesktop:${yakushiinRuntimeEnvironment.isDesktopPlatform}",
     );

@@ -42,7 +42,7 @@ class _WelcomePageState extends ConsumerState<WelcomePage> {
     }
   }
 
-  _goodByeYuuka() async {
+  Future<Future> _goodByeYuuka() async {
     return showDialog(
       context: context,
       builder: (context) {

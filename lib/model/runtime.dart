@@ -30,7 +30,7 @@ class YakushiinRuntimeEnvironment {
   late Box<GatewaySetting> dataEngineForGatewaySetting;
   late Box<NoaPlayerV2PlayList> dataEngineForV2PlayList;
 
-  init() async {
+  Future<void> init() async {
     if ((Platform.isWindows) || (Platform.isMacOS) || (Platform.isLinux)) {
       isDesktopPlatform = true;
     } else {
