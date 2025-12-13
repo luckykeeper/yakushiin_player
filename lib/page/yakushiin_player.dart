@@ -539,9 +539,11 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
           });
         }
         // 播放结束但是不能自动下一曲卡住时候的处理
+        // 条件：①即将播放结束 ②当前播放不是不是列表循环
         if ((nowPlayingDurationTotal - nowPlayingDurationCurrent <
                 Durations.short4) &&
-            (nowPlayingDurationCurrent > Durations.long4)) {
+            (nowPlayingDurationCurrent > Durations.long4) &&
+            (nowPlayingPlaylistMode.name == "loop")) {
           // 起一个计时器，如果2秒之后没有切到下一首，就手动切一下，如果是最后一首，就切到第一首
           checkPlayingMusicEndTimer ??= Timer(
             Duration(milliseconds: 1),
@@ -764,7 +766,7 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
               children: [
                 Text(
                   "播放模式：${nowPlayingPlaylistMode.name == "loop"
-                      ? "顺序播放"
+                      ? "列表循环"
                       : nowPlayingPlaylistMode.name == "single"
                       ? "单曲循环"
                       : nowPlayingPlaylistMode.name} | 设备音量： ${(currentVolumeSystem * 100).round()} | 软件音量: $currentVolumePlayer",
@@ -1002,6 +1004,13 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                 ElevatedButton.icon(
                   onPressed: () async {
                     await yakushiinPlayer.setPlaylistMode(PlaylistMode.loop);
+                    BotToast.showSimpleNotification(
+                      duration: const Duration(seconds: 2),
+                      hideCloseButton: false,
+                      backgroundColor: Colors.blue,
+                      title: "♻播放模式已调整到列表循环！",
+                      titleStyle: styleFontSimkai,
+                    );
                   },
                   label: Text("循环播放", style: styleFontSimkai),
                   icon: Icon(Icons.repeat_rounded),
@@ -1009,6 +1018,13 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                 ElevatedButton.icon(
                   onPressed: () async {
                     await yakushiinPlayer.setPlaylistMode(PlaylistMode.single);
+                    BotToast.showSimpleNotification(
+                      duration: const Duration(seconds: 2),
+                      hideCloseButton: false,
+                      backgroundColor: Colors.yellow,
+                      title: "❤播放模式已调整到单曲循环！",
+                      titleStyle: styleFontSimkai,
+                    );
                   },
                   label: Text("单曲循环", style: styleFontSimkai),
                   icon: Icon(Icons.looks_one_rounded),
