@@ -1,7 +1,7 @@
 name: yakushiin_player
 description: "YakushiinPlayer By Luckykeeper"
 publish_to: 'none'
-version: 1.0.0+2
+version: 1.0.1+1
 
 environment:
   sdk: ^3.7.0
@@ -38,7 +38,10 @@ dependencies:
   geolocator_web: ^4.1.2
   geolocator_apple: ^2.3.13
   geolocator_windows: ^0.2.5
-  cached_network_image: ^3.4.1
+  # flutter_background: ^1.3.0+1
+  audio_service: ^0.18.18
+  audio_session: ^0.2.2
+  
 
 dev_dependencies:
   flutter_test:

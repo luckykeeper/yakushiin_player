@@ -1,0 +1,49 @@
+// 第一部分：Gradle构建脚本自身的配置（最关键！）
+buildscript {
+    ext.kotlin_version = '2.3.0' // 推荐版本，兼容性好
+    
+    repositories {
+        // 【核心】国内镜像源必须放在最前面
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+        
+        // 官方源作为备用
+        google()
+        mavenCentral()
+    }
+    
+    dependencies {
+        // 使用与Gradle 8.9兼容的稳定版本
+        classpath 'com.android.tools.build:gradle:8.11.1' // 或 8.3.0
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
+// 第二部分：所有子项目的依赖源配置
+allprojects {
+    repositories {
+        // 同样将国内镜像源放在最前面
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+        
+        google()
+        mavenCentral()
+        
+        // 如果确实需要JCenter（很多库已迁移），可以添加但非必需
+        // maven { url 'https://maven.aliyun.com/repository/jcenter' }
+    }
+}
+
+rootProject.buildDir = "../build"
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+subprojects {
+    project.evaluationDependsOn(":app")
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}

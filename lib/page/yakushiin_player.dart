@@ -7,6 +7,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:audio_service/audio_service.dart';
 import 'package:bot_toast/bot_toast.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -24,6 +25,7 @@ import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_msg.dart'
 import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_playlist.dart';
 import 'package:yakushiin_player/model/runtime.dart';
 import 'package:yakushiin_player/model/version.dart';
+import 'package:yakushiin_player/model/yakushiin_background_player.dart';
 import 'package:yakushiin_player/model/yakushiin_logger.dart';
 import 'package:yakushiin_player/theme/font.dart';
 import 'package:yakushiin_player/yakushiin_widgets/weather_icon.dart';
@@ -52,6 +54,7 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
   double? nowPlayingAudioBitrate;
   int nowUsingSubTitleIndex = 0;
   int nowPlayingIndex = 0;
+  final nowPlayingIndexProvider = StateProvider<int>((ref) => 0);
   double currentVolumePlayer = 100;
   double currentVolumeSystem = 0;
   Timer? checkPlayListEndTimer;
@@ -98,8 +101,21 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
     yakushiinLogger.e("onStepCountError:$error");
   }
 
+  MediaItem _currentMediaItem() {
+    final playlist = ref.read(currentPlayList);
+    final index = ref.read(nowPlayingIndexProvider);
+    final music = playlist.musicList![index];
+    return MediaItem(
+      id: music.videoUrl ?? '',
+      title: music.videoName ?? '未知',
+      duration: nowPlayingDurationTotal,
+    );
+  }
+
   // 定位
   Timer? getLocationAndWeatherTimer;
+  // 通知栏推送
+  Timer? updateNotificationBarTimer;
   late LocationSettings locationSettings;
 
   Position? currentPosition;
@@ -224,6 +240,15 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
     ),
   );
 
+  Future<void> playSkipToNext() async {
+    if (nowPlayingIndex + 1 == ref.watch(currentPlayList).musicList?.length) {
+      // 播放列表尾
+      await yakushiinPlayer.jump(0);
+    } else {
+      await yakushiinPlayer.next();
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -284,6 +309,54 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
     ) async {
       yakushiinLogger.i("定时器:获取一次定位与天气");
       await getCurrentLocationAndWeather();
+    });
+
+    // 2. 获取 AudioHandler
+    final handler = yakushiinBackgroundPlayerHandler;
+
+    // 3. 注册回调
+    handler.onPlay = () async {
+      yakushiinLogger.i("AudioService => onPlay!");
+      await yakushiinPlayer.play(); // 如果已经暂停，这会恢复播放
+      handler.updatePlaybackState(playing: true, newItem: _currentMediaItem());
+    };
+
+    handler.onPause = () async {
+      yakushiinLogger.i("AudioService => onPause!");
+      await yakushiinPlayer.pause(); // 如果正在播放，这会暂停
+      handler.updatePlaybackState(
+        playing: false,
+        newItem: _currentMediaItem(), // 传入当前项，防止空白
+      );
+    };
+    handler.onNext = () => playSkipToNext();
+    handler.onPrevious = () => yakushiinPlayer.previous();
+
+    updateNotificationBarTimer = Timer.periodic(const Duration(seconds: 1), (
+      timer,
+    ) {
+      if (!mounted) return;
+      handler.updatePlaybackState(
+        playing: yakushiinPlayer.state.playing,
+        position: yakushiinPlayer.state.position,
+        bufferedPosition: nowBufferedDuration,
+        newItem: MediaItem(
+          id:
+              ref
+                  .read(currentPlayList)
+                  .musicList![ref.read(nowPlayingIndexProvider)]
+                  .videoUrl ??
+              '',
+          title:
+              ref
+                  .read(currentPlayList)
+                  .musicList![ref.read(nowPlayingIndexProvider)]
+                  .videoName ??
+              '未知',
+          artist: "YakushiinPlayer By Luckykeeper",
+          duration: yakushiinPlayer.state.duration,
+        ),
+      );
     });
 
     Timer(Duration(milliseconds: 100), () async {
@@ -452,6 +525,7 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
           );
         }
         nowPlayingIndex = playList.index;
+        ref.read(nowPlayingIndexProvider.notifier).state = playList.index;
         yakushiinLogger.i(
           "回写数据库，当前播放位置=>${playList.index}-$nowPlayingMusicName 成功",
         );
@@ -669,6 +743,7 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
     }
     FlutterVolumeController.removeListener();
     getLocationAndWeatherTimer?.cancel();
+    updateNotificationBarTimer?.cancel();
     checkPlayListEndTimer?.cancel();
     checkPlayingMusicEndTimer?.cancel();
     super.dispose();
@@ -723,7 +798,7 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
             Column(
               children: [
                 Text(
-                  "当前播放列表:${ref.watch(currentPlayList).playListName} (${nowPlayingIndex + 1}/${ref.watch(currentPlayList).musicList?.length == null ? "N/a" : ref.watch(currentPlayList).musicList!.length})",
+                  "当前播放列表:${ref.watch(currentPlayList).playListName} (${ref.watch(nowPlayingIndexProvider) + 1}/${ref.watch(currentPlayList).musicList?.length == null ? "N/a" : ref.watch(currentPlayList).musicList!.length})",
                   style: styleFontSimkaiBoldLarge,
                 ),
               ],
@@ -861,28 +936,95 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
               ],
             ),
             const Divider(),
-            SafeArea(
-              child: SizedBox(
-                width: MediaQuery.of(context).size.width,
-                height: MediaQuery.of(context).size.width * 9.0 / 16.0,
-                child: Video(
-                  controller: yakushiinPlayerController,
-                  subtitleViewConfiguration: const SubtitleViewConfiguration(
-                    style: TextStyle(
-                      height: 1.4,
-                      fontSize: 60.0,
-                      letterSpacing: 0.0,
-                      wordSpacing: 0.0,
-                      color: Color(0xffffffff),
-                      fontWeight: FontWeight.normal,
-                      fontFamily: fontSimkaiFamily,
-                      backgroundColor: Color(0xaa000000),
+            MaterialVideoControlsTheme(
+              normal: MaterialVideoControlsThemeData(
+                brightnessGesture: true,
+                topButtonBarMargin: EdgeInsets.only(left: 5),
+                topButtonBar: [
+                  Expanded(
+                    child: Consumer(
+                      // 👈 关键：让此区域独立监听 Riverpod
+                      builder: (context, ref, _) {
+                        final playlist = ref.watch(currentPlayList);
+                        final index = ref.watch(nowPlayingIndexProvider);
+                        final videoName = playlist.musicList![index].videoName;
+                        return Text(
+                          "$videoName",
+                          style: styleFontSimkaiCyan,
+                          overflow: TextOverflow.clip,
+                          maxLines: 5,
+                        );
+                      },
                     ),
-                    textAlign: TextAlign.center,
-                    padding: EdgeInsets.fromLTRB(16.0, 24.0, 16.0, 0.0),
                   ),
-                  pauseUponEnteringBackgroundMode: true,
-                  resumeUponEnteringForegroundMode: true,
+                ],
+                buttonBarButtonSize: 24.0,
+                buttonBarButtonColor: Colors.white,
+                seekBarPositionColor: const Color.fromARGB(255, 77, 208, 225),
+                seekBarThumbColor: Color.fromARGB(255, 77, 208, 225),
+              ),
+              fullscreen: MaterialVideoControlsThemeData(
+                brightnessGesture: true,
+                displaySeekBar: true,
+                automaticallyImplySkipNextButton: true,
+                automaticallyImplySkipPreviousButton: true,
+                seekBarPositionColor: Color.fromARGB(255, 77, 208, 225),
+                seekBarThumbColor: Color.fromARGB(255, 77, 208, 225),
+                seekBarMargin: EdgeInsets.only(bottom: 10),
+                bottomButtonBarMargin: EdgeInsets.only(
+                  left: 16.0,
+                  right: 8.0,
+                  bottom: 10,
+                ),
+                topButtonBarMargin: EdgeInsets.only(left: 5),
+                topButtonBar: [
+                  Expanded(
+                    child: Consumer(
+                      // 👈 关键：让此区域独立监听 Riverpod
+                      builder: (context, ref, _) {
+                        final playlist = ref.watch(currentPlayList);
+                        final index = ref.watch(nowPlayingIndexProvider);
+                        final videoName = playlist.musicList![index].videoName;
+                        return Text(
+                          "$videoName",
+                          style: styleFontSimkaiCyan,
+                          overflow: TextOverflow.clip,
+                          maxLines: 5,
+                        );
+                      },
+                    ),
+                  ),
+                ],
+                bottomButtonBar: [
+                  MaterialPositionIndicator(style: styleFontSimkai),
+                  Spacer(),
+                  MaterialFullscreenButton(),
+                ],
+              ),
+              child: SafeArea(
+                child: SizedBox(
+                  width: MediaQuery.of(context).size.width,
+                  height: MediaQuery.of(context).size.width * 9.0 / 16.0,
+                  child: Video(
+                    controller: yakushiinPlayerController,
+                    subtitleViewConfiguration: const SubtitleViewConfiguration(
+                      style: TextStyle(
+                        height: 1.4,
+                        fontSize: 60.0,
+                        letterSpacing: 0.0,
+                        wordSpacing: 0.0,
+                        color: Color(0xffffffff),
+                        fontWeight: FontWeight.normal,
+                        fontFamily: fontSimkaiFamily,
+                        backgroundColor: Color(0xaa000000),
+                        overflow: TextOverflow.clip,
+                      ),
+                      textAlign: TextAlign.center,
+                      padding: EdgeInsets.fromLTRB(16.0, 24.0, 16.0, 0.0),
+                    ),
+                    pauseUponEnteringBackgroundMode: false,
+                    resumeUponEnteringForegroundMode: false,
+                  ),
                 ),
               ),
             ),
@@ -914,13 +1056,14 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                     ),
                 ElevatedButton.icon(
                   onPressed: () async {
-                    if (nowPlayingIndex + 1 ==
-                        ref.watch(currentPlayList).musicList?.length) {
-                      // 播放列表尾
-                      await yakushiinPlayer.jump(0);
-                    } else {
-                      await yakushiinPlayer.next();
-                    }
+                    // if (nowPlayingIndex + 1 ==
+                    //     ref.watch(currentPlayList).musicList?.length) {
+                    //   // 播放列表尾
+                    //   await yakushiinPlayer.jump(0);
+                    // } else {
+                    //   await yakushiinPlayer.next();
+                    // }
+                    await playSkipToNext();
                   },
                   label: Text("下一曲", style: styleFontSimkai),
                   icon: Icon(Icons.skip_next),

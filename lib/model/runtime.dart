@@ -16,6 +16,7 @@ import 'package:yakushiin_player/model/yakushiin_logger.dart';
 
 class YakushiinRuntimeEnvironment {
   bool isDesktopPlatform = false;
+  bool isAndroidPlatform = false;
   String osVersion = "N/A";
   String dartRuntimeVersion = "N/A";
   late Directory appDocumentsDirectory;
@@ -35,6 +36,9 @@ class YakushiinRuntimeEnvironment {
       isDesktopPlatform = true;
     } else {
       isDesktopPlatform = false;
+    }
+    if (Platform.isAndroid) {
+      isAndroidPlatform = true;
     }
     osVersion = Platform.operatingSystemVersion;
     dartRuntimeVersion = Platform.version;
