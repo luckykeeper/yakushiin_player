@@ -8,6 +8,7 @@ import 'package:adaptive_theme/adaptive_theme.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:bot_toast/bot_toast.dart';
+import 'package:disable_battery_optimization/disable_battery_optimization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
@@ -98,6 +99,35 @@ void main() async {
       // androidNotificationIcon: 'mipmap/ic_launcher',
     ),
   );
+
+  // 电池优化
+  if (yakushiinRuntimeEnvironment.isAndroidPlatform) {
+    bool? isBatteryOptimizationDisabled =
+        await DisableBatteryOptimization.isBatteryOptimizationDisabled;
+    yakushiinLogger.i("Android 系统电池优化状态关闭情况:$isBatteryOptimizationDisabled");
+    if (isBatteryOptimizationDisabled != null &&
+        isBatteryOptimizationDisabled) {
+      // 没有开启电池优化
+    } else {
+      await DisableBatteryOptimization.showDisableBatteryOptimizationSettings();
+    }
+    bool? isManBatteryOptimizationDisabled =
+        await DisableBatteryOptimization
+            .isManufacturerBatteryOptimizationDisabled;
+    if (isManBatteryOptimizationDisabled != null &&
+        isManBatteryOptimizationDisabled) {
+      // 没有开启电池优化
+      yakushiinLogger.i(
+        "Android 厂商电池优化状态关闭情况:$isManBatteryOptimizationDisabled",
+      );
+    } else {
+      await DisableBatteryOptimization.showDisableManufacturerBatteryOptimizationSettings(
+        "温馨提示",
+        "设备开启了厂商电池优化功能，为正常运行，请将本软件添加到白名单喵",
+      );
+    }
+  }
+
   MediaKit.ensureInitialized();
   //  yakushiinBackgroundPlayerHandler = await AudioService.init(
   //   builder: () => AudioPlayerHandler(),
@@ -116,6 +146,9 @@ class YakushiinPlayer extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (yakushiinRuntimeEnvironment.isDesktopPlatform) {
+      windowManager.setTitle("YakuShiinPlayer By Luckykeeper");
+    }
     final botToastBuilder = BotToastInit();
     final smartDailogBuilder = FlutterSmartDialog.init();
     return AdaptiveTheme(

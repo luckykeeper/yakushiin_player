@@ -27,7 +27,10 @@ import 'package:yakushiin_player/model/runtime.dart';
 import 'package:yakushiin_player/model/version.dart';
 import 'package:yakushiin_player/model/yakushiin_background_player.dart';
 import 'package:yakushiin_player/model/yakushiin_logger.dart';
+import 'package:yakushiin_player/model/yakushiin_windows_feature_window_pin_top.dart';
 import 'package:yakushiin_player/theme/font.dart';
+import 'package:yakushiin_player/yakushiin_widgets/clock.dart';
+import 'package:yakushiin_player/yakushiin_widgets/commin_question_dialog.dart';
 import 'package:yakushiin_player/yakushiin_widgets/weather_icon.dart';
 
 class YakushiinPlayerPage extends ConsumerStatefulWidget {
@@ -59,6 +62,9 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
   double currentVolumeSystem = 0;
   Timer? checkPlayListEndTimer;
   Timer? checkPlayingMusicEndTimer;
+
+  // 默认启用防误触模式
+  bool denyPopFlag = true;
 
   // 硬件音频
   AudioStream _audioStream = AudioStream.music;
@@ -353,7 +359,8 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                   .musicList![ref.read(nowPlayingIndexProvider)]
                   .videoName ??
               '未知',
-          artist: "YakushiinPlayer By Luckykeeper",
+          artist:
+              "YakushiinPlayer By Luckykeeper => ${(nowPlayingDurationCurrent.inSeconds / 60).floor().toString().padLeft(2, '0')}:${(nowPlayingDurationCurrent.inSeconds % 60).floor().toString().padLeft(2, '0')}/${(nowPlayingDurationTotal.inSeconds / 60).floor().toString().padLeft(2, '0')}:${(nowPlayingDurationTotal.inSeconds % 60).floor().toString().padLeft(2, '0')}",
           duration: yakushiinPlayer.state.duration,
         ),
       );
@@ -414,6 +421,13 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
           setState(() {
             nowPlayingStatus = playing;
           });
+
+          if (yakushiinRuntimeEnvironment.isDesktopPlatform) {
+            String status = playing ? "正在播放" : "已暂停";
+            windowManager.setTitle(
+              "YakushiinPlayer By Luckykeeper - $status : $nowPlayingMusicName",
+            );
+          }
         }
       });
 
@@ -519,9 +533,16 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
           }
         }
         await yakushiinRuntimeEnvironment.dataEngineForV2PlayList.clear();
+        // https://github.com/isar/hive/issues/1047
+        // 在将对象添加到 Box 之前，必须创建一个全新的实例，而不是直接使用已有的对象
         for (var playList in localPlayList.playList!) {
+          var playListCopy = NoaPlayerV2PlayList(
+            id: playList.id,
+            playListName: playList.playListName,
+            musicList: playList.musicList,
+          );
           await yakushiinRuntimeEnvironment.dataEngineForV2PlayList.add(
-            playList,
+            playListCopy,
           );
         }
         nowPlayingIndex = playList.index;
@@ -746,583 +767,943 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
     updateNotificationBarTimer?.cancel();
     checkPlayListEndTimer?.cancel();
     checkPlayingMusicEndTimer?.cancel();
+    if (yakushiinRuntimeEnvironment.isDesktopPlatform) {
+      windowManager.setTitle("YakuShiinPlayer By Luckykeeper");
+    }
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: GestureDetector(
-          child: Row(
-            children: [
-              Text("YakushiinPlayer - 播放页", style: styleFontSimkai),
-              const Expanded(child: Text("")),
-            ],
-          ),
-          onPanStart: (details) {
-            if (yakushiinRuntimeEnvironment.isDesktopPlatform) {
-              windowManager.startDragging();
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          // 阻止正常的返回逻辑
+          return;
+        } else {
+          if (denyPopFlag) {
+            BotToast.showSimpleNotification(
+              duration: const Duration(seconds: 2),
+              hideCloseButton: false,
+              backgroundColor: Colors.pink[200],
+              title: "⛔当前处于防误触模式，屏蔽返回",
+              titleStyle: styleFontSimkai,
+            );
+          } else {
+            if (context.mounted) {
+              Navigator.pop(context);
             }
-          },
-          onDoubleTap: () async {
-            if (yakushiinRuntimeEnvironment.isDesktopPlatform) {
-              bool isMaximized = await windowManager.isMaximized();
-              if (!isMaximized) {
-                windowManager.maximize();
-              } else {
-                windowManager.unmaximize();
+          }
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: GestureDetector(
+            child: Row(
+              children: [
+                Text("YakushiinPlayer - 播放页", style: styleFontSimkai),
+                const Expanded(child: Text("")),
+              ],
+            ),
+            onPanStart: (details) {
+              if (yakushiinRuntimeEnvironment.isDesktopPlatform) {
+                windowManager.startDragging();
               }
-            }
-          },
+            },
+            onDoubleTap: () async {
+              if (yakushiinRuntimeEnvironment.isDesktopPlatform) {
+                bool isMaximized = await windowManager.isMaximized();
+                if (!isMaximized) {
+                  windowManager.maximize();
+                } else {
+                  windowManager.unmaximize();
+                }
+              }
+            },
+          ),
+          backgroundColor: Colors.cyan,
         ),
-        backgroundColor: Colors.cyan,
-      ),
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Row(
-              children: [
-                Text(
-                  "艾玛酱音乐播放器ヾ(≧▽≦*)o",
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 20,
-                    fontFamily: fontSimkaiFamily,
+        body: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Text(
+                    "艾玛酱音乐播放器ヾ(≧▽≦*)o",
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 20,
+                      fontFamily: fontSimkaiFamily,
+                    ),
                   ),
-                ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                Text(
-                  "当前播放列表:${ref.watch(currentPlayList).playListName} (${ref.watch(nowPlayingIndexProvider) + 1}/${ref.watch(currentPlayList).musicList?.length == null ? "N/a" : ref.watch(currentPlayList).musicList!.length})",
-                  style: styleFontSimkaiBoldLarge,
-                ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                SizedBox(
-                  height: 50,
-                  child: Text(
-                    "当前音乐：$nowPlayingMusicName",
+                ],
+              ),
+              const Divider(),
+              Column(
+                children: [
+                  Text(
+                    "当前播放列表:${ref.watch(currentPlayList).playListName} (${ref.watch(nowPlayingIndexProvider) + 1}/${ref.watch(currentPlayList).musicList?.length == null ? "N/a" : ref.watch(currentPlayList).musicList!.length})",
                     style: styleFontSimkaiBoldLarge,
                   ),
-                ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                SizedBox(
-                  height: 30,
-                  child: Text(
-                    "下一曲：$nextPlayingMusicName",
+                ],
+              ),
+              const Divider(),
+              Column(
+                children: [
+                  SizedBox(
+                    height: 50,
+                    child: Text(
+                      "当前音乐：$nowPlayingMusicName",
+                      style: styleFontSimkaiBoldLarge,
+                    ),
+                  ),
+                ],
+              ),
+              const Divider(),
+              Column(
+                children: [
+                  SizedBox(
+                    height: 30,
+                    child: Text(
+                      "下一曲：$nextPlayingMusicName",
+                      style: styleFontSimkaiBoldLarge,
+                    ),
+                  ),
+                ],
+              ),
+              const Divider(),
+              Column(
+                children: [
+                  Text(
+                    "播放进度=>当前: $nowPlayingDurationCurrent / 总: $nowPlayingDurationTotal / ${(nowPlayingDurationTotal - (nowPlayingDurationCurrent)).inSeconds} 秒",
                     style: styleFontSimkaiBoldLarge,
                   ),
-                ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                Text(
-                  "播放进度=>当前: $nowPlayingDurationCurrent / 总: $nowPlayingDurationTotal / ${(nowPlayingDurationTotal - (nowPlayingDurationCurrent)).inSeconds} 秒",
-                  style: styleFontSimkaiBoldLarge,
-                ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                Text(
-                  "播放模式：${nowPlayingPlaylistMode.name == "loop"
-                      ? "列表循环"
-                      : nowPlayingPlaylistMode.name == "single"
-                      ? "单曲循环"
-                      : nowPlayingPlaylistMode.name} | 设备音量： ${(currentVolumeSystem * 100).round()} | 软件音量: $currentVolumePlayer",
-                  style: styleFontSimkaiBoldLarge,
-                ),
-              ],
-            ),
-            const Divider(),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                if (pedometerStep != 0)
-                  Row(
-                    children: [
-                      Icon(
-                        pedometerStatus == 'walking'
-                            ? Icons.directions_walk
-                            : pedometerStatus == 'stopped'
-                            ? Icons.accessibility_new
-                            : Icons.error,
-                        size: 40,
-                      ),
-                      VerticalDivider(),
-                      Column(
+                ],
+              ),
+              const Divider(),
+              Column(
+                children: [
+                  Text(
+                    "播放模式：${nowPlayingPlaylistMode.name == "loop"
+                        ? "列表循环"
+                        : nowPlayingPlaylistMode.name == "single"
+                        ? "单曲循环"
+                        : nowPlayingPlaylistMode.name} | 设备音量： ${(currentVolumeSystem * 100).round()} | 软件音量: $currentVolumePlayer",
+                    style: styleFontSimkaiBoldLarge,
+                  ),
+                ],
+              ),
+              const Divider(),
+              Row(
+                mainAxisAlignment:
+                    yakushiinRuntimeEnvironment.isDesktopPlatform
+                        ? MainAxisAlignment.spaceEvenly
+                        : MainAxisAlignment.spaceBetween,
+                children: [
+                  if (!yakushiinRuntimeEnvironment.isDesktopPlatform)
+                    if (pedometerStep != 0)
+                      Row(
                         children: [
-                          Text("当前运动状态:", style: styleFontSimkaiCyanBoldLarge),
-                          Text(
-                            pedometerStatus,
-                            style: styleFontSimkaiBoldLarge,
+                          Icon(
+                            pedometerStatus == 'walking'
+                                ? Icons.directions_walk
+                                : pedometerStatus == 'stopped'
+                                ? Icons.accessibility_new
+                                : Icons.error,
+                            size: 40,
+                          ),
+                          VerticalDivider(),
+                          Column(
+                            children: [
+                              Text(
+                                "当前运动状态:",
+                                style: styleFontSimkaiCyanBoldLarge,
+                              ),
+                              Text(
+                                pedometerStatus,
+                                style: styleFontSimkaiBoldLarge,
+                              ),
+                            ],
+                          ),
+                          VerticalDivider(),
+                          Column(
+                            children: [
+                              Text(
+                                "开机以来步数:",
+                                style: styleFontSimkaiCyanBoldLarge,
+                              ),
+                              Text(
+                                "$pedometerStep",
+                                style: styleFontSimkaiBoldLarge,
+                              ),
+                            ],
                           ),
                         ],
                       ),
-                      VerticalDivider(),
-                      Column(
+                  if (!yakushiinRuntimeEnvironment.isDesktopPlatform)
+                    VerticalDivider(),
+                  // 移动端组件
+                  if (!yakushiinRuntimeEnvironment.isDesktopPlatform)
+                    if (currentWeather != null)
+                      Row(
                         children: [
-                          Text("开机以来步数:", style: styleFontSimkaiCyanBoldLarge),
-                          Text(
-                            "$pedometerStep",
-                            style: styleFontSimkaiBoldLarge,
+                          Column(
+                            children: [
+                              Text(
+                                "${currentWeather?.areaName}",
+                                style: styleFontSimkaiCyanBoldLarge,
+                              ),
+                              Text(
+                                "${currentWeather?.weatherDescription}",
+                                style: styleFontSimkaiBoldLarge,
+                              ),
+                            ],
+                          ),
+                          VerticalDivider(),
+                          Column(
+                            children: [
+                              Text(
+                                "${currentWeather?.temperature?.celsius?.toInt()}℃",
+                                style: styleFontSimkaiBoldLarge,
+                              ),
+                              Text(
+                                "${currentWeather?.humidity?.toInt()}%",
+                                style: styleFontSimkaiBoldLarge,
+                              ),
+                              Text(
+                                "${currentWeather?.windSpeed?.toInt()} m/s",
+                                style: styleFontSimkaiBoldLarge,
+                              ),
+                            ],
+                          ),
+                          VerticalDivider(),
+                          Column(
+                            children: [
+                              SizedBox(
+                                width: 50,
+                                height: 50,
+                                child: WeatherIconWidget(
+                                  iconCode: "${currentWeather?.weatherIcon}",
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
-                    ],
-                  ),
-                VerticalDivider(),
-                if (currentWeather != null)
-                  Row(
-                    children: [
-                      Column(
+                  // PC 端组件
+                  if (yakushiinRuntimeEnvironment.isDesktopPlatform)
+                    if (currentWeather != null)
+                      Row(
                         children: [
                           Text(
                             "${currentWeather?.areaName}",
-                            style: styleFontSimkaiCyanBoldLarge,
+                            style: styleFontSimkaiCyanBoldExtraLarge,
                           ),
+                          VerticalDivider(),
+
                           Text(
                             "${currentWeather?.weatherDescription}",
-                            style: styleFontSimkaiBoldLarge,
+                            style: styleFontSimkaiBoldExtraLarge,
+                          ),
+                          VerticalDivider(),
+                          Row(
+                            children: [
+                              Text(
+                                "${currentWeather?.temperature?.celsius?.toInt()}℃",
+                                style: styleFontSimkaiBoldExtraLarge,
+                              ),
+                              VerticalDivider(),
+                              Text(
+                                "${currentWeather?.humidity?.toInt()}%",
+                                style: styleFontSimkaiBoldExtraLarge,
+                              ),
+                              VerticalDivider(),
+                              Text(
+                                "${currentWeather?.windSpeed?.toInt()} m/s",
+                                style: styleFontSimkaiBoldExtraLarge,
+                              ),
+                            ],
+                          ),
+                          VerticalDivider(),
+                          Column(
+                            children: [
+                              SizedBox(
+                                width: 50,
+                                height: 50,
+                                child: WeatherIconWidget(
+                                  iconCode: "${currentWeather?.weatherIcon}",
+                                ),
+                              ),
+                            ],
+                          ),
+                          VerticalDivider(),
+                          Clock(
+                            clockTextStyle: styleFontSimkaiCyanBoldExtraLarge,
                           ),
                         ],
                       ),
-                      VerticalDivider(),
-                      Column(
-                        children: [
-                          Text(
-                            "${currentWeather?.temperature?.celsius?.toInt()}℃",
-                            style: styleFontSimkaiBoldLarge,
-                          ),
-                          Text(
-                            "${currentWeather?.humidity?.toInt()}%",
-                            style: styleFontSimkaiBoldLarge,
-                          ),
-                          Text(
-                            "${currentWeather?.windSpeed?.toInt()} m/s",
-                            style: styleFontSimkaiBoldLarge,
-                          ),
-                        ],
-                      ),
-                      VerticalDivider(),
-                      Column(
-                        children: [
-                          SizedBox(
-                            width: 50,
-                            height: 50,
-                            child: WeatherIconWidget(
-                              iconCode: "${currentWeather?.weatherIcon}",
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-              ],
-            ),
-            const Divider(),
-            MaterialVideoControlsTheme(
-              normal: MaterialVideoControlsThemeData(
-                brightnessGesture: true,
-                topButtonBarMargin: EdgeInsets.only(left: 5),
-                topButtonBar: [
-                  Expanded(
-                    child: Consumer(
-                      // 👈 关键：让此区域独立监听 Riverpod
-                      builder: (context, ref, _) {
-                        final playlist = ref.watch(currentPlayList);
-                        final index = ref.watch(nowPlayingIndexProvider);
-                        final videoName = playlist.musicList![index].videoName;
-                        return Text(
-                          "$videoName",
-                          style: styleFontSimkaiCyan,
-                          overflow: TextOverflow.clip,
-                          maxLines: 5,
-                        );
-                      },
-                    ),
-                  ),
-                ],
-                buttonBarButtonSize: 24.0,
-                buttonBarButtonColor: Colors.white,
-                seekBarPositionColor: const Color.fromARGB(255, 77, 208, 225),
-                seekBarThumbColor: Color.fromARGB(255, 77, 208, 225),
-              ),
-              fullscreen: MaterialVideoControlsThemeData(
-                brightnessGesture: true,
-                displaySeekBar: true,
-                automaticallyImplySkipNextButton: true,
-                automaticallyImplySkipPreviousButton: true,
-                seekBarPositionColor: Color.fromARGB(255, 77, 208, 225),
-                seekBarThumbColor: Color.fromARGB(255, 77, 208, 225),
-                seekBarMargin: EdgeInsets.only(bottom: 10),
-                bottomButtonBarMargin: EdgeInsets.only(
-                  left: 16.0,
-                  right: 8.0,
-                  bottom: 10,
-                ),
-                topButtonBarMargin: EdgeInsets.only(left: 5),
-                topButtonBar: [
-                  Expanded(
-                    child: Consumer(
-                      // 👈 关键：让此区域独立监听 Riverpod
-                      builder: (context, ref, _) {
-                        final playlist = ref.watch(currentPlayList);
-                        final index = ref.watch(nowPlayingIndexProvider);
-                        final videoName = playlist.musicList![index].videoName;
-                        return Text(
-                          "$videoName",
-                          style: styleFontSimkaiCyan,
-                          overflow: TextOverflow.clip,
-                          maxLines: 5,
-                        );
-                      },
-                    ),
-                  ),
-                ],
-                bottomButtonBar: [
-                  MaterialPositionIndicator(style: styleFontSimkai),
-                  Spacer(),
-                  MaterialFullscreenButton(),
                 ],
               ),
-              child: SafeArea(
-                child: SizedBox(
-                  width: MediaQuery.of(context).size.width,
-                  height: MediaQuery.of(context).size.width * 9.0 / 16.0,
-                  child: Video(
-                    controller: yakushiinPlayerController,
-                    subtitleViewConfiguration: const SubtitleViewConfiguration(
-                      style: TextStyle(
-                        height: 1.4,
-                        fontSize: 60.0,
-                        letterSpacing: 0.0,
-                        wordSpacing: 0.0,
-                        color: Color(0xffffffff),
-                        fontWeight: FontWeight.normal,
-                        fontFamily: fontSimkaiFamily,
-                        backgroundColor: Color(0xaa000000),
-                        overflow: TextOverflow.clip,
-                      ),
-                      textAlign: TextAlign.center,
-                      padding: EdgeInsets.fromLTRB(16.0, 24.0, 16.0, 0.0),
-                    ),
-                    pauseUponEnteringBackgroundMode: false,
-                    resumeUponEnteringForegroundMode: false,
-                  ),
-                ),
-              ),
-            ),
-            const Divider(),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    await yakushiinPlayer.previous();
-                  },
-                  label: Text("上一曲", style: styleFontSimkai),
-                  icon: Icon(Icons.skip_previous_rounded),
-                ),
-                nowPlayingStatus
-                    ? ElevatedButton.icon(
-                      onPressed: () async {
-                        await yakushiinPlayer.playOrPause();
-                      },
-                      label: Text("暂停", style: styleFontSimkai),
-                      icon: Icon(Icons.pause_rounded),
-                    )
-                    : ElevatedButton.icon(
-                      onPressed: () async {
-                        await yakushiinPlayer.playOrPause();
-                      },
-                      label: Text("播放", style: styleFontSimkai),
-                      icon: Icon(Icons.play_arrow_rounded),
-                    ),
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    // if (nowPlayingIndex + 1 ==
-                    //     ref.watch(currentPlayList).musicList?.length) {
-                    //   // 播放列表尾
-                    //   await yakushiinPlayer.jump(0);
-                    // } else {
-                    //   await yakushiinPlayer.next();
-                    // }
-                    await playSkipToNext();
-                  },
-                  label: Text("下一曲", style: styleFontSimkai),
-                  icon: Icon(Icons.skip_next),
-                ),
-              ],
-            ),
-            const Divider(),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    await FlutterVolumeController.lowerVolume(
-                      null,
-                      stream: AudioStream.music,
-                    );
-                  },
-                  label: Text("音量（硬） -", style: styleFontSimkai),
-                  icon: Icon(Icons.volume_down_rounded),
-                ),
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    await FlutterVolumeController.toggleMute(
-                      stream: AudioStream.music,
-                    );
-                  },
-                  label: Text("静音（硬）", style: styleFontSimkai),
-                  icon: Icon(Icons.volume_mute_rounded),
-                ),
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    await FlutterVolumeController.raiseVolume(
-                      null,
-                      stream: AudioStream.music,
-                    );
-                  },
-                  label: Text("音量（硬） +", style: styleFontSimkai),
-                  icon: Icon(Icons.volume_up_rounded),
-                ),
-              ],
-            ),
-            const Divider(),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    currentVolumePlayer - 5 < 0
-                        ? await yakushiinPlayer.setVolume(0)
-                        : await yakushiinPlayer.setVolume(
-                          currentVolumePlayer - 5,
-                        );
-                  },
-                  label: Text("音量（软） -", style: styleFontSimkai),
-                  icon: Icon(Icons.volume_down_rounded),
-                ),
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    yakushiinPlayer.jump(0);
-                  },
-                  label: Text("从头播放", style: styleFontSimkai),
-                  icon: Icon(Icons.fast_rewind_rounded),
-                ),
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    currentVolumePlayer + 5 > 100
-                        ? await yakushiinPlayer.setVolume(100)
-                        : await yakushiinPlayer.setVolume(
-                          currentVolumePlayer + 5,
-                        );
-                  },
-                  label: Text("音量（软） +", style: styleFontSimkai),
-                  icon: Icon(Icons.volume_up_rounded),
-                ),
-              ],
-            ),
-            const Divider(),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    await yakushiinPlayer.setPlaylistMode(PlaylistMode.loop);
-                    BotToast.showSimpleNotification(
-                      duration: const Duration(seconds: 2),
-                      hideCloseButton: false,
-                      backgroundColor: Colors.blue,
-                      title: "♻播放模式已调整到列表循环！",
-                      titleStyle: styleFontSimkai,
-                    );
-                  },
-                  label: Text("循环播放", style: styleFontSimkai),
-                  icon: Icon(Icons.repeat_rounded),
-                ),
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    await yakushiinPlayer.setPlaylistMode(PlaylistMode.single);
-                    BotToast.showSimpleNotification(
-                      duration: const Duration(seconds: 2),
-                      hideCloseButton: false,
-                      backgroundColor: Colors.yellow,
-                      title: "❤播放模式已调整到单曲循环！",
-                      titleStyle: styleFontSimkai,
-                    );
-                  },
-                  label: Text("单曲循环", style: styleFontSimkai),
-                  icon: Icon(Icons.looks_one_rounded),
-                ),
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    try {
-                      await Clipboard.setData(
-                        ClipboardData(
-                          text:
-                              "YakushiinPlayer Music Share By Luckykeeper:${Platform.lineTerminator}${ref.watch(currentPlayList).musicList![nowPlayingIndex].videoName}${Platform.lineTerminator}${ref.watch(currentPlayList).musicList![nowPlayingIndex].videoShareUrl}",
+              const Divider(),
+              yakushiinRuntimeEnvironment.isDesktopPlatform
+                  ? MaterialDesktopVideoControlsTheme(
+                    normal: MaterialDesktopVideoControlsThemeData(
+                      hideMouseOnControlsRemoval: true,
+                      topButtonBarMargin: EdgeInsets.only(left: 5),
+                      topButtonBar: [
+                        Expanded(
+                          child: Consumer(
+                            // 👈 关键：让此区域独立监听 Riverpod
+                            builder: (context, ref, _) {
+                              final playlist = ref.watch(currentPlayList);
+                              final index = ref.watch(nowPlayingIndexProvider);
+                              final videoName =
+                                  playlist.musicList![index].videoName;
+                              return Text(
+                                "$videoName",
+                                style: styleFontSimkaiCyan,
+                                overflow: TextOverflow.clip,
+                                maxLines: 5,
+                              );
+                            },
+                          ),
                         ),
+                      ],
+                      buttonBarButtonSize: 24.0,
+                      buttonBarButtonColor: Colors.white,
+                      seekBarPositionColor: const Color.fromARGB(
+                        255,
+                        77,
+                        208,
+                        225,
+                      ),
+                      seekBarThumbColor: Color.fromARGB(255, 77, 208, 225),
+                    ),
+                    fullscreen: MaterialDesktopVideoControlsThemeData(
+                      hideMouseOnControlsRemoval: true,
+                      displaySeekBar: true,
+                      automaticallyImplySkipNextButton: true,
+                      automaticallyImplySkipPreviousButton: true,
+                      seekBarPositionColor: Color.fromARGB(255, 77, 208, 225),
+                      seekBarThumbColor: Color.fromARGB(255, 77, 208, 225),
+                      seekBarMargin: EdgeInsets.only(bottom: 10),
+                      bottomButtonBarMargin: EdgeInsets.only(
+                        left: 16.0,
+                        right: 8.0,
+                        bottom: 10,
+                      ),
+                      topButtonBarMargin: EdgeInsets.only(left: 5),
+                      topButtonBar: [
+                        Expanded(
+                          child: Consumer(
+                            // 👈 关键：让此区域独立监听 Riverpod
+                            builder: (context, ref, _) {
+                              final playlist = ref.watch(currentPlayList);
+                              final index = ref.watch(nowPlayingIndexProvider);
+                              final videoName =
+                                  playlist.musicList![index].videoName;
+                              return Text(
+                                "$videoName",
+                                style: styleFontSimkaiCyan,
+                                overflow: TextOverflow.clip,
+                                maxLines: 5,
+                              );
+                            },
+                          ),
+                        ),
+                        Clock(
+                          clockTextStyle: styleFontSimkaiCyanBoldExtraLarge,
+                        ),
+                      ],
+                      bottomButtonBar: [
+                        MaterialDesktopSkipPreviousButton(),
+                        MaterialDesktopPlayOrPauseButton(),
+                        MaterialDesktopSkipNextButton(),
+                        MaterialDesktopVolumeButton(),
+                        MaterialDesktopPositionIndicator(
+                          style: styleFontSimkai,
+                        ),
+                        Spacer(),
+                        MaterialDesktopFullscreenButton(),
+                      ],
+                    ),
+                    child: SafeArea(
+                      child: SizedBox(
+                        width: MediaQuery.of(context).size.width,
+                        height: MediaQuery.of(context).size.width * 9.0 / 16.0,
+                        child: Video(
+                          controller: yakushiinPlayerController,
+                          subtitleViewConfiguration:
+                              const SubtitleViewConfiguration(
+                                style: TextStyle(
+                                  height: 1.4,
+                                  fontSize: 60.0,
+                                  letterSpacing: 0.0,
+                                  wordSpacing: 0.0,
+                                  color: Color(0xffffffff),
+                                  fontWeight: FontWeight.normal,
+                                  fontFamily: fontSimkaiFamily,
+                                  backgroundColor: Color(0xaa000000),
+                                  overflow: TextOverflow.clip,
+                                ),
+                                textAlign: TextAlign.center,
+                                padding: EdgeInsets.fromLTRB(
+                                  16.0,
+                                  24.0,
+                                  16.0,
+                                  0.0,
+                                ),
+                              ),
+                          pauseUponEnteringBackgroundMode: false,
+                          resumeUponEnteringForegroundMode: false,
+                        ),
+                      ),
+                    ),
+                  )
+                  : MaterialVideoControlsTheme(
+                    normal: MaterialVideoControlsThemeData(
+                      brightnessGesture: true,
+                      topButtonBarMargin: EdgeInsets.only(left: 5),
+                      topButtonBar: [
+                        Expanded(
+                          child: Consumer(
+                            // 👈 关键：让此区域独立监听 Riverpod
+                            builder: (context, ref, _) {
+                              final playlist = ref.watch(currentPlayList);
+                              final index = ref.watch(nowPlayingIndexProvider);
+                              final videoName =
+                                  playlist.musicList![index].videoName;
+                              return Text(
+                                "$videoName",
+                                style: styleFontSimkaiCyan,
+                                overflow: TextOverflow.clip,
+                                maxLines: 5,
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                      buttonBarButtonSize: 24.0,
+                      buttonBarButtonColor: Colors.white,
+                      seekBarPositionColor: const Color.fromARGB(
+                        255,
+                        77,
+                        208,
+                        225,
+                      ),
+                      seekBarThumbColor: Color.fromARGB(255, 77, 208, 225),
+                    ),
+                    fullscreen: MaterialVideoControlsThemeData(
+                      brightnessGesture: true,
+                      displaySeekBar: true,
+                      automaticallyImplySkipNextButton: true,
+                      automaticallyImplySkipPreviousButton: true,
+                      seekBarPositionColor: Color.fromARGB(255, 77, 208, 225),
+                      seekBarThumbColor: Color.fromARGB(255, 77, 208, 225),
+                      seekBarMargin: EdgeInsets.only(bottom: 10),
+                      bottomButtonBarMargin: EdgeInsets.only(
+                        left: 16.0,
+                        right: 8.0,
+                        bottom: 10,
+                      ),
+                      topButtonBarMargin: EdgeInsets.only(left: 5),
+                      topButtonBar: [
+                        Expanded(
+                          child: Consumer(
+                            // 👈 关键：让此区域独立监听 Riverpod
+                            builder: (context, ref, _) {
+                              final playlist = ref.watch(currentPlayList);
+                              final index = ref.watch(nowPlayingIndexProvider);
+                              final videoName =
+                                  playlist.musicList![index].videoName;
+                              return Text(
+                                "$videoName",
+                                style: styleFontSimkaiCyan,
+                                overflow: TextOverflow.clip,
+                                maxLines: 5,
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                      bottomButtonBar: [
+                        MaterialPositionIndicator(style: styleFontSimkai),
+                        Spacer(),
+                        MaterialFullscreenButton(),
+                      ],
+                    ),
+                    child: SafeArea(
+                      child: SizedBox(
+                        width: MediaQuery.of(context).size.width,
+                        height: MediaQuery.of(context).size.width * 9.0 / 16.0,
+                        child: Video(
+                          controller: yakushiinPlayerController,
+                          subtitleViewConfiguration:
+                              const SubtitleViewConfiguration(
+                                style: TextStyle(
+                                  height: 1.4,
+                                  fontSize: 60.0,
+                                  letterSpacing: 0.0,
+                                  wordSpacing: 0.0,
+                                  color: Color(0xffffffff),
+                                  fontWeight: FontWeight.normal,
+                                  fontFamily: fontSimkaiFamily,
+                                  backgroundColor: Color(0xaa000000),
+                                  overflow: TextOverflow.clip,
+                                ),
+                                textAlign: TextAlign.center,
+                                padding: EdgeInsets.fromLTRB(
+                                  16.0,
+                                  24.0,
+                                  16.0,
+                                  0.0,
+                                ),
+                              ),
+                          pauseUponEnteringBackgroundMode: false,
+                          resumeUponEnteringForegroundMode: false,
+                        ),
+                      ),
+                    ),
+                  ),
+              const Divider(),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      await yakushiinPlayer.previous();
+                    },
+                    label: Text("上一曲", style: styleFontSimkai),
+                    icon: Icon(Icons.skip_previous_rounded),
+                  ),
+                  nowPlayingStatus
+                      ? ElevatedButton.icon(
+                        onPressed: () async {
+                          await yakushiinPlayer.playOrPause();
+                        },
+                        label: Text("暂停", style: styleFontSimkai),
+                        icon: Icon(Icons.pause_rounded),
+                      )
+                      : ElevatedButton.icon(
+                        onPressed: () async {
+                          await yakushiinPlayer.playOrPause();
+                        },
+                        label: Text("播放", style: styleFontSimkai),
+                        icon: Icon(Icons.play_arrow_rounded),
+                      ),
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      // if (nowPlayingIndex + 1 ==
+                      //     ref.watch(currentPlayList).musicList?.length) {
+                      //   // 播放列表尾
+                      //   await yakushiinPlayer.jump(0);
+                      // } else {
+                      //   await yakushiinPlayer.next();
+                      // }
+                      await playSkipToNext();
+                    },
+                    label: Text("下一曲", style: styleFontSimkai),
+                    icon: Icon(Icons.skip_next),
+                  ),
+                ],
+              ),
+              const Divider(),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      await FlutterVolumeController.lowerVolume(
+                        null,
+                        stream: AudioStream.music,
                       );
+                    },
+                    label: Text("音量（硬） -", style: styleFontSimkai),
+                    icon: Icon(Icons.volume_down_rounded),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed:
+                        denyPopFlag
+                            ? null
+                            : () async {
+                              await FlutterVolumeController.toggleMute(
+                                stream: AudioStream.music,
+                              );
+                            },
+                    label: Text("静音（硬）", style: styleFontSimkai),
+                    icon: Icon(Icons.volume_mute_rounded),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      await FlutterVolumeController.raiseVolume(
+                        null,
+                        stream: AudioStream.music,
+                      );
+                    },
+                    label: Text("音量（硬） +", style: styleFontSimkai),
+                    icon: Icon(Icons.volume_up_rounded),
+                  ),
+                ],
+              ),
+              const Divider(),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      currentVolumePlayer - 5 < 0
+                          ? await yakushiinPlayer.setVolume(0)
+                          : await yakushiinPlayer.setVolume(
+                            currentVolumePlayer - 5,
+                          );
+                    },
+                    label: Text("音量（软） -", style: styleFontSimkai),
+                    icon: Icon(Icons.volume_down_rounded),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed:
+                        denyPopFlag
+                            ? null
+                            : () async {
+                              yakushiinPlayer.jump(0);
+                            },
+                    label: Text("从头播放", style: styleFontSimkai),
+                    icon: Icon(Icons.fast_rewind_rounded),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      currentVolumePlayer + 5 > 100
+                          ? await yakushiinPlayer.setVolume(100)
+                          : await yakushiinPlayer.setVolume(
+                            currentVolumePlayer + 5,
+                          );
+                    },
+                    label: Text("音量（软） +", style: styleFontSimkai),
+                    icon: Icon(Icons.volume_up_rounded),
+                  ),
+                ],
+              ),
+              const Divider(),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      await yakushiinPlayer.setPlaylistMode(PlaylistMode.loop);
                       BotToast.showSimpleNotification(
-                        duration: const Duration(seconds: 1),
+                        duration: const Duration(seconds: 2),
                         hideCloseButton: false,
-                        backgroundColor: Colors.green[300],
-                        title: "✅复制成功",
+                        backgroundColor: Colors.blue,
+                        title: "♻播放模式已调整到列表循环！",
                         titleStyle: styleFontSimkai,
                       );
-                    } catch (e) {
+                    },
+                    label: Text("循环播放", style: styleFontSimkai),
+                    icon: Icon(Icons.repeat_rounded),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      await yakushiinPlayer.setPlaylistMode(
+                        PlaylistMode.single,
+                      );
                       BotToast.showSimpleNotification(
-                        duration: const Duration(seconds: 1),
+                        duration: const Duration(seconds: 2),
                         hideCloseButton: false,
-                        backgroundColor: Colors.green[300],
-                        title: "⛔复制失败:$e",
+                        backgroundColor: Colors.yellow,
+                        title: "❤播放模式已调整到单曲循环！",
                         titleStyle: styleFontSimkai,
                       );
-                    }
-                  },
-                  label: Text("复制链接", style: styleFontSimkai),
-                  icon: Icon(Icons.copy_rounded),
+                    },
+                    label: Text("单曲循环", style: styleFontSimkai),
+                    icon: Icon(Icons.looks_one_rounded),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      try {
+                        await Clipboard.setData(
+                          ClipboardData(
+                            text:
+                                "YakushiinPlayer Music Share By Luckykeeper:${Platform.lineTerminator}${ref.watch(currentPlayList).musicList![nowPlayingIndex].videoName}${Platform.lineTerminator}${ref.watch(currentPlayList).musicList![nowPlayingIndex].videoShareUrl}",
+                          ),
+                        );
+                        BotToast.showSimpleNotification(
+                          duration: const Duration(seconds: 1),
+                          hideCloseButton: false,
+                          backgroundColor: Colors.green[300],
+                          title: "✅复制成功",
+                          titleStyle: styleFontSimkai,
+                        );
+                      } catch (e) {
+                        BotToast.showSimpleNotification(
+                          duration: const Duration(seconds: 1),
+                          hideCloseButton: false,
+                          backgroundColor: Colors.pink[300],
+                          title: "⛔复制失败:$e",
+                          titleStyle: styleFontSimkai,
+                        );
+                      }
+                    },
+                    onLongPress: () async {
+                      try {
+                        await Clipboard.setData(
+                          ClipboardData(
+                            text:
+                                "YakushiinPlayer Music Share By Luckykeeper:${Platform.lineTerminator}------${Platform.lineTerminator}MusicInfo⬇${Platform.lineTerminator}Name: ${ref.watch(currentPlayList).musicList![nowPlayingIndex].videoName}${Platform.lineTerminator}Url: ${ref.watch(currentPlayList).musicList![nowPlayingIndex].videoShareUrl}${Platform.lineTerminator}------${Platform.lineTerminator}SubTitleInfo(.srt)⬇${Platform.lineTerminator}SubTitleLanguage: ${ref.watch(currentPlayList).musicList![nowPlayingIndex].subTitleLang} / ${ref.watch(currentPlayList).musicList![nowPlayingIndex].subTitleName}${Platform.lineTerminator}SubTitleUrl: ${ref.watch(currentPlayList).musicList![nowPlayingIndex].subTitleUrl}",
+                          ),
+                        );
+                        BotToast.showSimpleNotification(
+                          duration: const Duration(seconds: 1),
+                          hideCloseButton: false,
+                          backgroundColor: Colors.green[300],
+                          title: "✅带字幕链接复制成功",
+                          titleStyle: styleFontSimkai,
+                        );
+                      } catch (e) {
+                        BotToast.showSimpleNotification(
+                          duration: const Duration(seconds: 1),
+                          hideCloseButton: false,
+                          backgroundColor: Colors.pink[200],
+                          title: "⛔带字幕链接复制失败:$e",
+                          titleStyle: styleFontSimkai,
+                        );
+                      }
+                    },
+                    label: Text("复制链接", style: styleFontSimkai),
+                    icon: Icon(Icons.copy_rounded),
+                  ),
+                ],
+              ),
+              const Divider(),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      List<Widget> musicWidgetList = [];
+                      for (
+                        var i = 0;
+                        i < ref.watch(currentPlayList).musicList!.length;
+                        i++
+                      ) {
+                        WidgetStateProperty<Color?>? btnBackgroundColor;
+                        if (nowPlayingIndex + 1 == i + 1) {
+                          btnBackgroundColor = WidgetStateProperty.all(
+                            Colors.grey[300],
+                          );
+                        }
+                        var thisMusicInfo = ElevatedButton(
+                          style: ButtonStyle(
+                            backgroundColor: btnBackgroundColor,
+                          ),
+                          onPressed: () async {
+                            await yakushiinPlayer.jump(i);
+                          },
+                          child: Row(
+                            children: [
+                              Text("${i + 1}", style: styleFontSimkai),
+                              VerticalDivider(),
+                              Expanded(
+                                child: Text(
+                                  "${ref.watch(currentPlayList).musicList![i].videoName}",
+                                  style: styleFontSimkai,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                        musicWidgetList.add(thisMusicInfo);
+                        musicWidgetList.add(SizedBox(height: 10));
+                      }
+                      await commonQuestionDialog(
+                        context,
+                        "当前歌单：${ref.watch(currentPlayList).playListName} (${ref.watch(nowPlayingIndexProvider) + 1}/${ref.watch(currentPlayList).musicList?.length == null ? "N/a" : ref.watch(currentPlayList).musicList!.length})",
+                        musicWidgetList,
+                        "",
+                        "返回",
+                        doNotShowCancelText: true,
+                        makeDialogScrollView: true,
+                      );
+                    },
+                    label: Text("当前歌单", style: styleFontSimkai),
+                    icon: Icon(Icons.list_rounded),
+                  ),
+
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      BotToast.showSimpleNotification(
+                        duration: const Duration(seconds: 2),
+                        hideCloseButton: false,
+                        backgroundColor: Colors.yellow,
+                        title: "⚠防误触模式需要长按交互",
+                        titleStyle: styleFontSimkai,
+                      );
+                    },
+                    onLongPress: () async {
+                      setState(() {
+                        denyPopFlag = !denyPopFlag;
+                      });
+                      if (denyPopFlag) {
+                        BotToast.showSimpleNotification(
+                          duration: const Duration(seconds: 2),
+                          hideCloseButton: false,
+                          backgroundColor: Colors.pink[200],
+                          title: "⛔防误触模式已启动",
+                          titleStyle: styleFontSimkai,
+                        );
+                      } else {
+                        BotToast.showSimpleNotification(
+                          duration: const Duration(seconds: 1),
+                          hideCloseButton: false,
+                          backgroundColor: Colors.green[300],
+                          title: "✅防误触模式已关闭",
+                          titleStyle: styleFontSimkai,
+                        );
+                      }
+                    },
+                    label: Text(
+                      denyPopFlag ? "防误触（锁）" : "防误触（解锁）",
+                      style: styleFontSimkai,
+                    ),
+                    icon: Icon(
+                      denyPopFlag
+                          ? Icons.lock_rounded
+                          : Icons.lock_open_rounded,
+                    ),
+                  ),
+                ],
+              ),
+              if (yakushiinRuntimeEnvironment.isDesktopPlatform)
+                const Divider(),
+              if (yakushiinRuntimeEnvironment.isDesktopPlatform)
+                Text("PC 端专属功能：👇", style: styleFontSimkai),
+              if (yakushiinRuntimeEnvironment.isDesktopPlatform)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [PinWindowButton()],
                 ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [Text("以下是调试信息:", style: styleFontSimkaiCyanBold)],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                Text(
-                  "当前缓存状态: $nowBufferStatus",
-                  style: styleFontSimkaiBoldLarge,
-                ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                Text(
-                  "当前缓存位置:$nowBufferedDuration",
-                  style: styleFontSimkaiBoldLarge,
-                ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                Text(
-                  "当前视频参数: 硬解 ${nowPlayingVideoParams.hwPixelformat} | 软解 ${nowPlayingVideoParams.pixelformat} | 宽 ${nowPlayingVideoParams.w} | 高 ${nowPlayingVideoParams.h} | 方向 ${nowPlayingVideoParams.rotate} | 修正宽 ${nowPlayingVideoParams.dw} | 修正高 ${nowPlayingVideoParams.dh}",
-                  style: styleFontSimkaiBoldLarge,
-                ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                Text(
-                  "当前音频参数: 格式 ${nowPlayingAudioParams.format} | 通道数 ${nowPlayingAudioParams.channelCount} | 通道 ${nowPlayingAudioParams.channels} | 采样率 ${nowPlayingAudioParams.sampleRate}",
-                  style: styleFontSimkaiBoldLarge,
-                ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                Text(
-                  "当前输出设备:${nowPlayingAudioDevice.name}-${nowPlayingAudioDevice.description}",
-                  style: styleFontSimkaiBoldLarge,
-                ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                Text(
-                  "可用输出设备:${nowPlayingAudioDevicesAvailable.toString()}",
-                  style: styleFontSimkaiBoldLarge,
-                ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                if (Platform.isAndroid)
+              const Divider(),
+              Column(
+                children: [Text("以下是调试信息:", style: styleFontSimkaiCyanBold)],
+              ),
+              const Divider(),
+              Column(
+                children: [
                   Text(
-                    'Audio Stream: $_audioStream',
+                    "当前缓存状态: $nowBufferStatus",
                     style: styleFontSimkaiBoldLarge,
                   ),
-                if (Platform.isIOS)
+                ],
+              ),
+              const Divider(),
+              Column(
+                children: [
                   Text(
-                    'Audio Session Category: $_audioSessionCategory',
+                    "当前缓存位置:$nowBufferedDuration",
                     style: styleFontSimkaiBoldLarge,
                   ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                Text(
-                  "计步:当前状态=> $pedometerStatus | 状态改变时间=>$pedometerTimeStampStatusChanged",
-                  style: styleFontSimkaiBoldLarge,
-                ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                Text(
-                  "计步:步数=> $pedometerStep | 状态改变时间=>$pedometerTimeStampStepChanged",
-                  style: styleFontSimkaiBoldLarge,
-                ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                Text(
-                  "定位:精度=> ${locationSettings.accuracy} | 经度=>${currentPosition == null ? "unknown" : currentPosition?.longitude} | 纬度=>${currentPosition == null ? "unknown" : currentPosition?.latitude}",
-                  style: styleFontSimkaiBoldLarge,
-                ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                Text(
-                  "天气: 国家=>${currentWeather == null ? "unknown" : currentWeather?.country} | 位置=> ${currentWeather == null ? "unknown" : currentWeather?.areaName} | 日期=> ${currentWeather == null ? "unknown" : currentWeather?.date}",
-                  style: styleFontSimkaiBoldLarge,
-                ),
-              ],
-            ),
-            const Divider(),
-            Column(
-              children: [
-                Text(
-                  "天气: 描述=>${currentWeather == null ? "unknown" : currentWeather?.weatherDescription} | 温度=> ${currentWeather == null ? "unknown" : currentWeather?.temperature} | 湿度=> ${currentWeather == null ? "unknown" : currentWeather?.humidity}",
-                  style: styleFontSimkaiBoldLarge,
-                ),
-              ],
-            ),
-            const Divider(),
-          ],
+                ],
+              ),
+              const Divider(),
+              Column(
+                children: [
+                  Text(
+                    "当前视频参数: 硬解 ${nowPlayingVideoParams.hwPixelformat} | 软解 ${nowPlayingVideoParams.pixelformat} | 宽 ${nowPlayingVideoParams.w} | 高 ${nowPlayingVideoParams.h} | 方向 ${nowPlayingVideoParams.rotate} | 修正宽 ${nowPlayingVideoParams.dw} | 修正高 ${nowPlayingVideoParams.dh}",
+                    style: styleFontSimkaiBoldLarge,
+                  ),
+                ],
+              ),
+              const Divider(),
+              Column(
+                children: [
+                  Text(
+                    "当前音频参数: 格式 ${nowPlayingAudioParams.format} | 通道数 ${nowPlayingAudioParams.channelCount} | 通道 ${nowPlayingAudioParams.channels} | 采样率 ${nowPlayingAudioParams.sampleRate}",
+                    style: styleFontSimkaiBoldLarge,
+                  ),
+                ],
+              ),
+              const Divider(),
+              Column(
+                children: [
+                  Text(
+                    "当前输出设备:${nowPlayingAudioDevice.name}-${nowPlayingAudioDevice.description}",
+                    style: styleFontSimkaiBoldLarge,
+                  ),
+                ],
+              ),
+              const Divider(),
+              Column(
+                children: [
+                  Text(
+                    "可用输出设备:${nowPlayingAudioDevicesAvailable.toString()}",
+                    style: styleFontSimkaiBoldLarge,
+                  ),
+                ],
+              ),
+              const Divider(),
+              Column(
+                children: [
+                  if (Platform.isAndroid)
+                    Text(
+                      'Audio Stream: $_audioStream',
+                      style: styleFontSimkaiBoldLarge,
+                    ),
+                  if (Platform.isIOS)
+                    Text(
+                      'Audio Session Category: $_audioSessionCategory',
+                      style: styleFontSimkaiBoldLarge,
+                    ),
+                ],
+              ),
+              const Divider(),
+              Column(
+                children: [
+                  Text(
+                    "计步:当前状态=> $pedometerStatus | 状态改变时间=>$pedometerTimeStampStatusChanged",
+                    style: styleFontSimkaiBoldLarge,
+                  ),
+                ],
+              ),
+              const Divider(),
+              Column(
+                children: [
+                  Text(
+                    "计步:步数=> $pedometerStep | 状态改变时间=>$pedometerTimeStampStepChanged",
+                    style: styleFontSimkaiBoldLarge,
+                  ),
+                ],
+              ),
+              const Divider(),
+              Column(
+                children: [
+                  Text(
+                    "定位:精度=> ${locationSettings.accuracy} | 经度=>${currentPosition == null ? "unknown" : currentPosition?.longitude} | 纬度=>${currentPosition == null ? "unknown" : currentPosition?.latitude}",
+                    style: styleFontSimkaiBoldLarge,
+                  ),
+                ],
+              ),
+              const Divider(),
+              Column(
+                children: [
+                  Text(
+                    "天气: 国家=>${currentWeather == null ? "unknown" : currentWeather?.country} | 位置=> ${currentWeather == null ? "unknown" : currentWeather?.areaName} | 日期=> ${currentWeather == null ? "unknown" : currentWeather?.date}",
+                    style: styleFontSimkaiBoldLarge,
+                  ),
+                ],
+              ),
+              const Divider(),
+              Column(
+                children: [
+                  Text(
+                    "天气: 描述=>${currentWeather == null ? "unknown" : currentWeather?.weatherDescription} | 温度=> ${currentWeather == null ? "unknown" : currentWeather?.temperature} | 湿度=> ${currentWeather == null ? "unknown" : currentWeather?.humidity}",
+                    style: styleFontSimkaiBoldLarge,
+                  ),
+                ],
+              ),
+              const Divider(),
+            ],
+          ),
         ),
       ),
     );

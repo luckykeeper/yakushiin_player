@@ -4,6 +4,7 @@
 // @Email         : luckykeeper@luckykeeper.site
 // @Project       : yakushiin_player
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:bot_toast/bot_toast.dart';
@@ -23,6 +24,7 @@ import 'package:yakushiin_player/theme/font.dart';
 import 'package:yakushiin_player/yakushiin_widgets/commin_question_dialog.dart';
 import 'package:yakushiin_player/yakushiin_widgets/common_error_dialog.dart';
 import 'package:yakushiin_player/yakushiin_widgets/sys_info_bar.dart';
+import 'package:tray_manager/tray_manager.dart' as tray_manager;
 
 class WelcomePage extends ConsumerStatefulWidget {
   const WelcomePage({super.key});
@@ -31,7 +33,8 @@ class WelcomePage extends ConsumerStatefulWidget {
   ConsumerState<WelcomePage> createState() => _WelcomePageState();
 }
 
-class _WelcomePageState extends ConsumerState<WelcomePage> {
+class _WelcomePageState extends ConsumerState<WelcomePage>
+    with tray_manager.TrayListener {
   @override
   void initState() {
     super.initState();
@@ -40,6 +43,42 @@ class _WelcomePageState extends ConsumerState<WelcomePage> {
     } catch (e) {
       debugPrint("FlutterNativeSplash: $e");
     }
+    if (yakushiinRuntimeEnvironment.isDesktopPlatform) {
+      tray_manager.trayManager.addListener(this);
+      _initTray();
+    }
+  }
+
+  Future<void> _initTray() async {
+    await tray_manager.trayManager.setIcon(
+      Platform.isWindows
+          ? 'assets/images/app_icon.ico'
+          : 'assets/images/app_icon.png',
+    );
+    await tray_manager.trayManager.setToolTip(
+      "YakushiinPlayer, 艾玛酱音乐播放器 ${appVersion}_$buildTime | Powered by Luckykeeper",
+    );
+    tray_manager.Menu menu = tray_manager.Menu(
+      items: [
+        tray_manager.MenuItem(
+          key: 'open_project_page',
+          label: 'YakushiinPlayer By Luckykeeper $appVersion',
+        ),
+        tray_manager.MenuItem.separator(),
+        tray_manager.MenuItem(key: 'show_main_window', label: '显示主窗口'),
+        tray_manager.MenuItem(key: 'hide_main_window', label: '隐藏主窗口'),
+        tray_manager.MenuItem(key: 'exit_app', label: '退出 YakushiinPlayer'),
+      ],
+    );
+    await tray_manager.trayManager.setContextMenu(menu);
+  }
+
+  @override
+  void dispose() {
+    if (yakushiinRuntimeEnvironment.isDesktopPlatform) {
+      tray_manager.trayManager.removeListener(this);
+    }
+    super.dispose();
   }
 
   Future<Future> _goodByeYuuka() async {
@@ -309,6 +348,9 @@ class _WelcomePageState extends ConsumerState<WelcomePage> {
                                             ),
                                           ),
                                         );
+                                        playListBtnListWidget.add(
+                                          SizedBox(height: 10),
+                                        );
                                       }
                                     }
                                     commonQuestionDialog(
@@ -448,5 +490,49 @@ class _WelcomePageState extends ConsumerState<WelcomePage> {
         ],
       ),
     );
+  }
+
+  @override
+  void onTrayIconMouseDown() {
+    windowManager.show();
+    windowManager.focus();
+  }
+
+  @override
+  void onTrayIconRightMouseDown() {
+    tray_manager.trayManager.popUpContextMenu();
+  }
+
+  @override
+  Future<void> onTrayMenuItemClick(tray_manager.MenuItem menuItem) async {
+    switch (menuItem.key) {
+      case 'open_project_page':
+        try {
+          await launchUrlWithBrowser(
+            "https://github.com/luckykeeper/yakushiin_player",
+          );
+        } catch (e) {
+          BotToast.showSimpleNotification(
+            duration: const Duration(seconds: 2),
+            hideCloseButton: false,
+            backgroundColor: Colors.pink[300],
+            title: "链接打开失败:$e",
+            titleStyle: styleFontSimkai,
+          );
+        }
+        break;
+      case 'show_main_window':
+        await windowManager.show();
+        await windowManager.focus();
+        break;
+      case 'hide_main_window':
+        await windowManager.hide();
+        break;
+      case 'exit_app':
+        if (yakushiinRuntimeEnvironment.isDesktopPlatform) {
+          exit(0);
+        }
+        break;
+    }
   }
 }

@@ -21,6 +21,12 @@ TextStyle styleFontSimkaiBoldLarge = TextStyle(
   fontSize: 15,
 );
 
+TextStyle styleFontSimkaiBoldExtraLarge = TextStyle(
+  fontFamily: fontSimkaiFamily,
+  fontWeight: FontWeight.bold,
+  fontSize: 30,
+);
+
 TextStyle styleFontSimkaiPink = TextStyle(
   fontFamily: fontSimkaiFamily,
   color: Colors.pink[300],
@@ -48,4 +54,11 @@ TextStyle styleFontSimkaiCyanBoldLarge = TextStyle(
   color: Colors.cyan[300],
   fontWeight: FontWeight.bold,
   fontSize: 15,
+);
+
+TextStyle styleFontSimkaiCyanBoldExtraLarge = TextStyle(
+  fontFamily: fontSimkaiFamily,
+  color: Colors.cyan[300],
+  fontWeight: FontWeight.bold,
+  fontSize: 30,
 );

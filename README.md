@@ -10,6 +10,8 @@
 | 设置页                                                       | 播放页                                                       |
 | <img src="./readme_images/preview_setting_page.jpg" style="zoom:20%;" /> | <img src="./readme_images/preview_player_page.jpg" style="zoom:20%;" /> |
 
+Update：以上页面可能不是最新，更新内容请见 Release Page
+
 ## 使用
 
 和 [luckykeeper/OAPlayer](https://github.com/luckykeeper/OAPlayer) 一样，仍然需要自行实现后端（以及管理工具），后端和管理工具暂不开源，后端网关名字叫 [NoaHandler](https://blog.cocoa.xin/article/71/#架构设计) ，使用者需要自行实现该网关的部分功能（音乐管理模块），具体需要实现的部分介绍如下
@@ -79,7 +81,7 @@ type NoaPlayerV2PlayList struct {
 
 **返回示例**：（Json）
 
-**注意：由于 `HiveObject` 原因，`playList` 播放列表只能放一个，不能放多个播放列表，否则播放时会有问题，后面的版本有时间我想想办法处理下**
+~~注意：由于 `HiveObject` 原因，`playList` 播放列表只能放一个，不能放多个播放列表，否则播放时会有问题，后面的版本有时间我想想办法处理下~~
 
 `musicList` 里面的 `playListID` 与 `playList` 下的 `id` 对应
 
