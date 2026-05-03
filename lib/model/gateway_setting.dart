@@ -11,12 +11,14 @@ class GatewaySetting extends HiveObject {
   String gatewayAddress;
   String gatewayToken;
   String weatherApiToken;
+  bool tvMode;
 
   GatewaySetting({
     this.id = 0,
     required this.gatewayAddress,
     required this.gatewayToken,
     required this.weatherApiToken,
+    this.tvMode = false,
   });
 
   Map<String, dynamic> toJson() {

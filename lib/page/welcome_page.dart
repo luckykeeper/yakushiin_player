@@ -253,6 +253,9 @@ class _WelcomePageState extends ConsumerState<WelcomePage>
                                           ),
                                         ),
                                       );
+                                      playListBtnListWidget.add(
+                                        SizedBox(height: 10),
+                                      );
                                     }
                                     commonQuestionDialog(
                                       context,

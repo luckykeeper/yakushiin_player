@@ -12,3 +12,11 @@ extension HiveRegistrar on HiveInterface {
     registerAdapter(NoaPlayerV2PlayListAdapter());
   }
 }
+
+extension IsolatedHiveRegistrar on IsolatedHiveInterface {
+  void registerAdapters() {
+    registerAdapter(GatewaySettingAdapter());
+    registerAdapter(NoaPlayerV2MusicAdapter());
+    registerAdapter(NoaPlayerV2PlayListAdapter());
+  }
+}

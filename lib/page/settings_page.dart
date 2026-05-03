@@ -13,6 +13,7 @@ import 'package:yakushiin_player/model/gateway_setting.dart';
 import 'package:yakushiin_player/model/runtime.dart';
 import 'package:yakushiin_player/model/yakushiin_logger.dart';
 import 'package:yakushiin_player/theme/font.dart';
+import 'package:yakushiin_player/yakushiin_widgets/custom_switch_with_description.dart';
 import 'package:yakushiin_player/yakushiin_widgets/sys_info_bar.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -26,6 +27,7 @@ class _SettingsPageState extends State<SettingsPage> {
   TextEditingController gatewayAddressController = TextEditingController();
   TextEditingController gatewayTokenController = TextEditingController();
   TextEditingController weatherApiTokenController = TextEditingController();
+  bool tvMode = false;
   final GlobalKey _formKey = GlobalKey<FormState>();
 
   @override
@@ -41,6 +43,11 @@ class _SettingsPageState extends State<SettingsPage> {
               "${yakushiinRuntimeEnvironment.dataEngineForGatewaySetting.getAt(0)?.gatewayToken}";
           weatherApiTokenController.text =
               "${yakushiinRuntimeEnvironment.dataEngineForGatewaySetting.getAt(0)?.weatherApiToken}";
+          tvMode =
+              yakushiinRuntimeEnvironment.dataEngineForGatewaySetting
+                  .getAt(0)
+                  ?.tvMode ??
+              false;
         });
       } catch (e) {
         yakushiinLogger.e("initState 拉取网关配置失败或尚未配置过网关信息！异常信息：$e");
@@ -145,6 +152,22 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                       obscureText: true,
                     ),
+                    Row(
+                      children: [
+                        CustomSwitchWithDescription(
+                          value: tvMode,
+                          onChanged: (value) {
+                            setState(() => tvMode = value);
+                          },
+                          title: "电视模式",
+                          description: '电视模式开关，当开启时，上下键的功能将会从默认的调整音量改变为上下切歌',
+                          leading: const Icon(
+                            Icons.tv,
+                          ), // 与上方 TextFormField 的 icon 对齐
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                        ),
+                      ],
+                    ),
                     Padding(
                       padding: const EdgeInsets.only(top: 28.0),
                       child: Column(
@@ -179,6 +202,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                                 weatherApiToken:
                                                     weatherApiTokenController
                                                         .text,
+                                                tvMode: tvMode,
                                               ),
                                             );
                                         BotToast.showSimpleNotification(

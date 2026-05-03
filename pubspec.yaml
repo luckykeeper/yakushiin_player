@@ -1,9 +1,10 @@
 name: yakushiin_player
 description: "YakushiinPlayer By Luckykeeper"
 publish_to: 'none'
-version: 1.0.1+1
+version: 1.0.1+2
 
 environment:
+# dev_with: flutter 3.41.9 | vs2026
   sdk: ^3.7.0
 
 dependencies:
@@ -48,7 +49,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
+  flutter_lints: ^5.0.0
   riverpod_generator: ^2.6.5
   build_runner: ^2.4.15
   custom_lint: ^0.7.5

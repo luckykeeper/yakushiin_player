@@ -21,7 +21,6 @@ import 'package:pedometer/pedometer.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:weather/weather.dart';
 import 'package:window_manager/window_manager.dart';
-import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_msg.dart';
 import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_playlist.dart';
 import 'package:yakushiin_player/model/runtime.dart';
 import 'package:yakushiin_player/model/version.dart';
@@ -30,7 +29,6 @@ import 'package:yakushiin_player/model/yakushiin_logger.dart';
 import 'package:yakushiin_player/model/yakushiin_windows_feature_window_pin_top.dart';
 import 'package:yakushiin_player/theme/font.dart';
 import 'package:yakushiin_player/yakushiin_widgets/clock.dart';
-import 'package:yakushiin_player/yakushiin_widgets/commin_question_dialog.dart';
 import 'package:yakushiin_player/yakushiin_widgets/weather_icon.dart';
 
 class YakushiinPlayerPage extends ConsumerStatefulWidget {
@@ -62,6 +60,9 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
   double currentVolumeSystem = 0;
   Timer? checkPlayListEndTimer;
   Timer? checkPlayingMusicEndTimer;
+
+  // 电视模式，调整上下键的默认行为
+  bool tvMode = false;
 
   // 默认启用防误触模式
   bool denyPopFlag = true;
@@ -268,6 +269,14 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
         await _loadAndroidAudioStream();
       }
     });
+
+    // 电视模式配置
+    tvMode =
+        yakushiinRuntimeEnvironment.dataEngineForGatewaySetting
+            .getAt(0)
+            ?.tvMode ??
+        false;
+
     FlutterVolumeController.addListener((volume) {
       setState(() {
         currentVolumeSystem = volume;
@@ -505,51 +514,51 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
           // yakushiinLogger.d("没有字幕，清除掉当前字幕轨");
           await yakushiinPlayer.setSubtitleTrack(SubtitleTrack.no());
         }
+
+        // 更新当前播放位置
+        nowPlayingIndex = playList.index;
+        ref.read(nowPlayingIndexProvider.notifier).state = playList.index;
+
         // 更新播放状态到数据库
         for (var i = 0; i < ref.read(currentPlayList).musicList!.length; i++) {
           ref.read(currentPlayList).musicList![i].nowPlaying = false;
         }
         ref.read(currentPlayList).musicList![playList.index].nowPlaying = true;
-        NoaPlayerV2Msg localPlayList = NoaPlayerV2Msg(playList: []);
-        yakushiinLogger.d(
-          "歌单数量：${yakushiinRuntimeEnvironment.dataEngineForV2PlayList.length}",
-        );
-        for (
-          var i = 0;
-          i < yakushiinRuntimeEnvironment.dataEngineForV2PlayList.length;
-          i++
-        ) {
-          var thisList = yakushiinRuntimeEnvironment.dataEngineForV2PlayList
-              .getAt(i);
-          if (thisList != null) {
-            // 播放列表名称同名，则取当前播放列表状态写回数据库
-            yakushiinLogger.d("回写数据库，遍历播放列表=>${thisList.playListName}");
-            if (thisList.playListName ==
-                ref.watch(currentPlayList).playListName) {
-              localPlayList.playList!.add(ref.watch(currentPlayList));
-            } else {
-              localPlayList.playList!.add(thisList);
-            }
+        // 更新播放状态到数据库（去重，确保每个播放列表名称唯一）
+        final box = yakushiinRuntimeEnvironment.dataEngineForV2PlayList;
+        final currentList = ref.read(currentPlayList); // 使用 read 获取当前快照
+
+        // 1. 读取所有已有播放列表，放入 Map（自动按名称去重）
+        final map = <String, NoaPlayerV2PlayList>{};
+        for (int i = 0; i < box.length; i++) {
+          final item = box.getAt(i);
+          if (item != null) {
+            map["${item.playListName}"] = item; // 同名键会覆盖旧值，自然去重
           }
         }
-        await yakushiinRuntimeEnvironment.dataEngineForV2PlayList.clear();
-        // https://github.com/isar/hive/issues/1047
-        // 在将对象添加到 Box 之前，必须创建一个全新的实例，而不是直接使用已有的对象
-        for (var playList in localPlayList.playList!) {
-          var playListCopy = NoaPlayerV2PlayList(
-            id: playList.id,
-            playListName: playList.playListName,
-            musicList: playList.musicList,
-          );
-          await yakushiinRuntimeEnvironment.dataEngineForV2PlayList.add(
-            playListCopy,
+
+        // 2. 用当前播放列表覆盖（或新增）对应名称的记录
+        map["${currentList.playListName}"] = NoaPlayerV2PlayList(
+          id: currentList.id,
+          playListName: currentList.playListName,
+          musicList: currentList.musicList, // 此时 nowPlaying 已更新
+        );
+
+        // 3. 清空数据库，重新插入去重后的所有播放列表
+        await box.clear();
+        for (final item in map.values) {
+          // 必须创建全新实例（Hive 要求）
+          await box.add(
+            NoaPlayerV2PlayList(
+              id: item.id,
+              playListName: item.playListName,
+              musicList: item.musicList,
+            ),
           );
         }
-        nowPlayingIndex = playList.index;
-        ref.read(nowPlayingIndexProvider.notifier).state = playList.index;
-        yakushiinLogger.i(
-          "回写数据库，当前播放位置=>${playList.index}-$nowPlayingMusicName 成功",
-        );
+
+        yakushiinLogger.i("回写数据库完成，当前播放列表数量：${box.length}");
+
         if (mounted) {
           setState(() {});
         }
@@ -841,215 +850,339 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                 ],
               ),
               const Divider(),
-              Column(
-                children: [
-                  Text(
-                    "当前播放列表:${ref.watch(currentPlayList).playListName} (${ref.watch(nowPlayingIndexProvider) + 1}/${ref.watch(currentPlayList).musicList?.length == null ? "N/a" : ref.watch(currentPlayList).musicList!.length})",
-                    style: styleFontSimkaiBoldLarge,
-                  ),
-                ],
-              ),
-              const Divider(),
-              Column(
-                children: [
-                  SizedBox(
-                    height: 50,
-                    child: Text(
-                      "当前音乐：$nowPlayingMusicName",
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    Text(
+                      "当前播放列表:${ref.watch(currentPlayList).playListName} (${nowPlayingIndex + 1}/${ref.watch(currentPlayList).musicList?.length})",
                       style: styleFontSimkaiBoldLarge,
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
               const Divider(),
-              Column(
-                children: [
-                  SizedBox(
-                    height: 30,
-                    child: Text(
-                      "下一曲：$nextPlayingMusicName",
-                      style: styleFontSimkaiBoldLarge,
-                    ),
-                  ),
-                ],
-              ),
-              const Divider(),
-              Column(
-                children: [
-                  Text(
-                    "播放进度=>当前: $nowPlayingDurationCurrent / 总: $nowPlayingDurationTotal / ${(nowPlayingDurationTotal - (nowPlayingDurationCurrent)).inSeconds} 秒",
-                    style: styleFontSimkaiBoldLarge,
-                  ),
-                ],
-              ),
-              const Divider(),
-              Column(
-                children: [
-                  Text(
-                    "播放模式：${nowPlayingPlaylistMode.name == "loop"
-                        ? "列表循环"
-                        : nowPlayingPlaylistMode.name == "single"
-                        ? "单曲循环"
-                        : nowPlayingPlaylistMode.name} | 设备音量： ${(currentVolumeSystem * 100).round()} | 软件音量: $currentVolumePlayer",
-                    style: styleFontSimkaiBoldLarge,
-                  ),
-                ],
-              ),
-              const Divider(),
-              Row(
-                mainAxisAlignment:
-                    yakushiinRuntimeEnvironment.isDesktopPlatform
-                        ? MainAxisAlignment.spaceEvenly
-                        : MainAxisAlignment.spaceBetween,
-                children: [
-                  if (!yakushiinRuntimeEnvironment.isDesktopPlatform)
-                    if (pedometerStep != 0)
-                      Row(
-                        children: [
-                          Icon(
-                            pedometerStatus == 'walking'
-                                ? Icons.directions_walk
-                                : pedometerStatus == 'stopped'
-                                ? Icons.accessibility_new
-                                : Icons.error,
-                            size: 40,
-                          ),
-                          VerticalDivider(),
-                          Column(
-                            children: [
-                              Text(
-                                "当前运动状态:",
-                                style: styleFontSimkaiCyanBoldLarge,
-                              ),
-                              Text(
-                                pedometerStatus,
-                                style: styleFontSimkaiBoldLarge,
-                              ),
-                            ],
-                          ),
-                          VerticalDivider(),
-                          Column(
-                            children: [
-                              Text(
-                                "开机以来步数:",
-                                style: styleFontSimkaiCyanBoldLarge,
-                              ),
-                              Text(
-                                "$pedometerStep",
-                                style: styleFontSimkaiBoldLarge,
-                              ),
-                            ],
-                          ),
-                        ],
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    SizedBox(
+                      height: 50,
+                      child: Text(
+                        "当前音乐：$nowPlayingMusicName",
+                        style: styleFontSimkaiBoldLarge,
                       ),
-                  if (!yakushiinRuntimeEnvironment.isDesktopPlatform)
-                    VerticalDivider(),
-                  // 移动端组件
-                  if (!yakushiinRuntimeEnvironment.isDesktopPlatform)
-                    if (currentWeather != null)
-                      Row(
-                        children: [
-                          Column(
-                            children: [
-                              Text(
-                                "${currentWeather?.areaName}",
-                                style: styleFontSimkaiCyanBoldLarge,
-                              ),
-                              Text(
-                                "${currentWeather?.weatherDescription}",
-                                style: styleFontSimkaiBoldLarge,
-                              ),
-                            ],
-                          ),
-                          VerticalDivider(),
-                          Column(
-                            children: [
-                              Text(
-                                "${currentWeather?.temperature?.celsius?.toInt()}℃",
-                                style: styleFontSimkaiBoldLarge,
-                              ),
-                              Text(
-                                "${currentWeather?.humidity?.toInt()}%",
-                                style: styleFontSimkaiBoldLarge,
-                              ),
-                              Text(
-                                "${currentWeather?.windSpeed?.toInt()} m/s",
-                                style: styleFontSimkaiBoldLarge,
-                              ),
-                            ],
-                          ),
-                          VerticalDivider(),
-                          Column(
-                            children: [
-                              SizedBox(
-                                width: 50,
-                                height: 50,
-                                child: WeatherIconWidget(
-                                  iconCode: "${currentWeather?.weatherIcon}",
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(),
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    SizedBox(
+                      height: 30,
+                      child: Text(
+                        "下一曲：$nextPlayingMusicName",
+                        style: styleFontSimkaiBoldLarge,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(),
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    Text(
+                      "播放进度=>当前: $nowPlayingDurationCurrent / 总: $nowPlayingDurationTotal / ${(nowPlayingDurationTotal - (nowPlayingDurationCurrent)).inSeconds} 秒",
+                      style: styleFontSimkaiBoldLarge,
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(),
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    Text(
+                      "播放模式：${nowPlayingPlaylistMode.name == "loop"
+                          ? "列表循环"
+                          : nowPlayingPlaylistMode.name == "single"
+                          ? "单曲循环"
+                          : nowPlayingPlaylistMode.name} | 设备音量： ${(currentVolumeSystem * 100).round()} | 软件音量: $currentVolumePlayer",
+                      style: styleFontSimkaiBoldLarge,
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(),
+              ExcludeSemantics(
+                child: Row(
+                  mainAxisAlignment:
+                      yakushiinRuntimeEnvironment.isDesktopPlatform
+                          ? MainAxisAlignment.spaceEvenly
+                          : MainAxisAlignment.spaceBetween,
+                  children: [
+                    if (!yakushiinRuntimeEnvironment.isDesktopPlatform)
+                      if (pedometerStep != 0)
+                        Row(
+                          children: [
+                            Icon(
+                              pedometerStatus == 'walking'
+                                  ? Icons.directions_walk
+                                  : pedometerStatus == 'stopped'
+                                  ? Icons.accessibility_new
+                                  : Icons.error,
+                              size: 40,
+                            ),
+                            VerticalDivider(),
+                            Column(
+                              children: [
+                                Text(
+                                  "当前运动状态:",
+                                  style: styleFontSimkaiCyanBoldLarge,
                                 ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                  // PC 端组件
-                  if (yakushiinRuntimeEnvironment.isDesktopPlatform)
-                    if (currentWeather != null)
-                      Row(
-                        children: [
-                          Text(
-                            "${currentWeather?.areaName}",
-                            style: styleFontSimkaiCyanBoldExtraLarge,
-                          ),
-                          VerticalDivider(),
+                                Text(
+                                  pedometerStatus,
+                                  style: styleFontSimkaiBoldLarge,
+                                ),
+                              ],
+                            ),
+                            VerticalDivider(),
+                            Column(
+                              children: [
+                                Text(
+                                  "开机以来步数:",
+                                  style: styleFontSimkaiCyanBoldLarge,
+                                ),
+                                Text(
+                                  "$pedometerStep",
+                                  style: styleFontSimkaiBoldLarge,
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                    if (!yakushiinRuntimeEnvironment.isDesktopPlatform)
+                      VerticalDivider(),
+                    // 移动端组件
+                    if (!yakushiinRuntimeEnvironment.isDesktopPlatform)
+                      if (currentWeather != null)
+                        Row(
+                          children: [
+                            Column(
+                              children: [
+                                Text(
+                                  "${currentWeather?.areaName}",
+                                  style: styleFontSimkaiCyanBoldLarge,
+                                ),
+                                Text(
+                                  "${currentWeather?.weatherDescription}",
+                                  style: styleFontSimkaiBoldLarge,
+                                ),
+                              ],
+                            ),
+                            VerticalDivider(),
+                            Column(
+                              children: [
+                                Text(
+                                  "${currentWeather?.temperature?.celsius?.toInt()}℃",
+                                  style: styleFontSimkaiBoldLarge,
+                                ),
+                                Text(
+                                  "${currentWeather?.humidity?.toInt()}%",
+                                  style: styleFontSimkaiBoldLarge,
+                                ),
+                                Text(
+                                  "${currentWeather?.windSpeed?.toInt()} m/s",
+                                  style: styleFontSimkaiBoldLarge,
+                                ),
+                              ],
+                            ),
+                            VerticalDivider(),
+                            Column(
+                              children: [
+                                SizedBox(
+                                  width: 50,
+                                  height: 50,
+                                  child: WeatherIconWidget(
+                                    iconCode: "${currentWeather?.weatherIcon}",
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                    // PC 端组件
+                    if (yakushiinRuntimeEnvironment.isDesktopPlatform)
+                      if (currentWeather != null)
+                        Row(
+                          children: [
+                            Text(
+                              "${currentWeather?.areaName}",
+                              style: styleFontSimkaiCyanBoldExtraLarge,
+                            ),
+                            VerticalDivider(),
 
-                          Text(
-                            "${currentWeather?.weatherDescription}",
-                            style: styleFontSimkaiBoldExtraLarge,
-                          ),
-                          VerticalDivider(),
-                          Row(
-                            children: [
-                              Text(
-                                "${currentWeather?.temperature?.celsius?.toInt()}℃",
-                                style: styleFontSimkaiBoldExtraLarge,
-                              ),
-                              VerticalDivider(),
-                              Text(
-                                "${currentWeather?.humidity?.toInt()}%",
-                                style: styleFontSimkaiBoldExtraLarge,
-                              ),
-                              VerticalDivider(),
-                              Text(
-                                "${currentWeather?.windSpeed?.toInt()} m/s",
-                                style: styleFontSimkaiBoldExtraLarge,
-                              ),
-                            ],
-                          ),
-                          VerticalDivider(),
-                          Column(
-                            children: [
-                              SizedBox(
-                                width: 50,
-                                height: 50,
-                                child: WeatherIconWidget(
-                                  iconCode: "${currentWeather?.weatherIcon}",
+                            Text(
+                              "${currentWeather?.weatherDescription}",
+                              style: styleFontSimkaiBoldExtraLarge,
+                            ),
+                            VerticalDivider(),
+                            Row(
+                              children: [
+                                Text(
+                                  "${currentWeather?.temperature?.celsius?.toInt()}℃",
+                                  style: styleFontSimkaiBoldExtraLarge,
                                 ),
-                              ),
-                            ],
-                          ),
-                          VerticalDivider(),
-                          Clock(
-                            clockTextStyle: styleFontSimkaiCyanBoldExtraLarge,
-                          ),
-                        ],
-                      ),
-                ],
+                                VerticalDivider(),
+                                Text(
+                                  "${currentWeather?.humidity?.toInt()}%",
+                                  style: styleFontSimkaiBoldExtraLarge,
+                                ),
+                                VerticalDivider(),
+                                Text(
+                                  "${currentWeather?.windSpeed?.toInt()} m/s",
+                                  style: styleFontSimkaiBoldExtraLarge,
+                                ),
+                              ],
+                            ),
+                            VerticalDivider(),
+                            Column(
+                              children: [
+                                SizedBox(
+                                  width: 50,
+                                  height: 50,
+                                  child: WeatherIconWidget(
+                                    iconCode: "${currentWeather?.weatherIcon}",
+                                  ),
+                                ),
+                              ],
+                            ),
+                            VerticalDivider(),
+                            Clock(
+                              clockTextStyle: styleFontSimkaiCyanBoldExtraLarge,
+                            ),
+                          ],
+                        ),
+                  ],
+                ),
               ),
               const Divider(),
               yakushiinRuntimeEnvironment.isDesktopPlatform
                   ? MaterialDesktopVideoControlsTheme(
                     normal: MaterialDesktopVideoControlsThemeData(
+                      keyboardShortcuts: {
+                        // 1. 覆盖左方向键：修复进度溢出问题
+                        LogicalKeySet(LogicalKeyboardKey.arrowLeft): () {
+                          final pos = yakushiinPlayer.state.position; // 使用实时位置
+                          final newPos = pos - const Duration(seconds: 5);
+                          yakushiinPlayer.seek(
+                            newPos < Duration.zero ? Duration.zero : newPos,
+                          );
+                        },
+                        // 2. 覆盖右方向键：防止快进溢出
+                        LogicalKeySet(LogicalKeyboardKey.arrowRight): () {
+                          final pos = yakushiinPlayer.state.position;
+                          final dur = yakushiinPlayer.state.duration;
+                          final newPos = pos + const Duration(seconds: 5);
+                          yakushiinPlayer.seek(
+                            newPos > (dur - const Duration(seconds: 2))
+                                ? dur
+                                : newPos,
+                          );
+                        },
+
+                        // 3. 根据 tvMode 覆盖上下方向键
+                        if (tvMode) ...{
+                          LogicalKeySet(LogicalKeyboardKey.arrowUp): () {
+                            yakushiinPlayer.previous();
+                          },
+                          LogicalKeySet(LogicalKeyboardKey.arrowDown): () {
+                            yakushiinPlayer.next();
+                          },
+                        } else ...{
+                          // 非电视模式：恢复默认的音量调节
+                          LogicalKeySet(LogicalKeyboardKey.arrowUp): () {
+                            final vol = yakushiinPlayer.state.volume + 5;
+                            yakushiinPlayer.setVolume(vol > 100 ? 100 : vol);
+                          },
+                          LogicalKeySet(LogicalKeyboardKey.arrowDown): () {
+                            final vol = yakushiinPlayer.state.volume - 5;
+                            yakushiinPlayer.setVolume(vol < 0 ? 0 : vol);
+                          },
+                        },
+
+                        // 空格：播放/暂停
+                        LogicalKeySet(LogicalKeyboardKey.space): () {
+                          yakushiinPlayer.playOrPause();
+                        },
+                        // F：切换全屏
+                        LogicalKeySet(LogicalKeyboardKey.keyF): () {
+                          if (isFullscreen(context)) {
+                            exitFullscreen(context);
+                          } else {
+                            enterFullscreen(context);
+                          }
+                        },
+                        // Esc：退出全屏
+                        LogicalKeySet(LogicalKeyboardKey.escape): () {
+                          exitFullscreen(context);
+                        },
+                        // J：后退10秒
+                        LogicalKeySet(LogicalKeyboardKey.keyJ): () {
+                          final pos = yakushiinPlayer.state.position;
+                          final newPos = pos - const Duration(seconds: 10);
+                          yakushiinPlayer.seek(
+                            newPos < Duration.zero ? Duration.zero : newPos,
+                          );
+                        },
+                        // L：前进10秒
+                        LogicalKeySet(LogicalKeyboardKey.keyL): () {
+                          final pos = yakushiinPlayer.state.position;
+                          final dur = yakushiinPlayer.state.duration;
+                          final newPos = pos + const Duration(seconds: 10);
+                          yakushiinPlayer.seek(newPos > dur ? dur : newPos);
+                        },
+                        // 数字键 0-9 快速定位
+                        LogicalKeySet(LogicalKeyboardKey.digit0):
+                            () => yakushiinPlayer.seek(Duration.zero),
+                        LogicalKeySet(LogicalKeyboardKey.digit1):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.1,
+                            ),
+                        LogicalKeySet(LogicalKeyboardKey.digit2):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.2,
+                            ),
+                        LogicalKeySet(LogicalKeyboardKey.digit3):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.3,
+                            ),
+                        LogicalKeySet(LogicalKeyboardKey.digit4):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.4,
+                            ),
+                        LogicalKeySet(LogicalKeyboardKey.digit5):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.5,
+                            ),
+                        LogicalKeySet(LogicalKeyboardKey.digit6):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.6,
+                            ),
+                        LogicalKeySet(LogicalKeyboardKey.digit7):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.7,
+                            ),
+                        LogicalKeySet(LogicalKeyboardKey.digit8):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.8,
+                            ),
+                        LogicalKeySet(LogicalKeyboardKey.digit9):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.9,
+                            ),
+                      },
                       hideMouseOnControlsRemoval: true,
                       topButtonBarMargin: EdgeInsets.only(left: 5),
                       topButtonBar: [
@@ -1082,6 +1215,118 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                       seekBarThumbColor: Color.fromARGB(255, 77, 208, 225),
                     ),
                     fullscreen: MaterialDesktopVideoControlsThemeData(
+                      keyboardShortcuts: {
+                        // 1. 覆盖左方向键：修复进度溢出问题
+                        LogicalKeySet(LogicalKeyboardKey.arrowLeft): () {
+                          final pos = yakushiinPlayer.state.position; // 使用实时位置
+                          final newPos = pos - const Duration(seconds: 5);
+                          yakushiinPlayer.seek(
+                            newPos < Duration.zero ? Duration.zero : newPos,
+                          );
+                        },
+                        // 2. 覆盖右方向键：防止快进溢出
+                        LogicalKeySet(LogicalKeyboardKey.arrowRight): () {
+                          final pos = yakushiinPlayer.state.position;
+                          final dur = yakushiinPlayer.state.duration;
+                          final newPos = pos + const Duration(seconds: 5);
+                          yakushiinPlayer.seek(
+                            newPos > (dur - const Duration(seconds: 2))
+                                ? dur
+                                : newPos,
+                          );
+                        },
+
+                        // 3. 根据 tvMode 覆盖上下方向键
+                        if (tvMode) ...{
+                          LogicalKeySet(LogicalKeyboardKey.arrowUp): () {
+                            yakushiinPlayer.previous();
+                          },
+                          LogicalKeySet(LogicalKeyboardKey.arrowDown): () {
+                            yakushiinPlayer.next();
+                          },
+                        } else ...{
+                          // 非电视模式：恢复默认的音量调节
+                          LogicalKeySet(LogicalKeyboardKey.arrowUp): () {
+                            final vol = yakushiinPlayer.state.volume + 5;
+                            yakushiinPlayer.setVolume(vol > 100 ? 100 : vol);
+                          },
+                          LogicalKeySet(LogicalKeyboardKey.arrowDown): () {
+                            final vol = yakushiinPlayer.state.volume - 5;
+                            yakushiinPlayer.setVolume(vol < 0 ? 0 : vol);
+                          },
+                        },
+
+                        // 空格：播放/暂停
+                        LogicalKeySet(LogicalKeyboardKey.space): () {
+                          yakushiinPlayer.playOrPause();
+                        },
+                        // F：切换全屏
+                        LogicalKeySet(LogicalKeyboardKey.keyF): () {
+                          if (isFullscreen(context)) {
+                            exitFullscreen(context);
+                          } else {
+                            enterFullscreen(context);
+                          }
+                        },
+                        // Esc：退出全屏
+                        LogicalKeySet(LogicalKeyboardKey.escape): () {
+                          exitFullscreen(context);
+                        },
+                        // J：后退10秒
+                        LogicalKeySet(LogicalKeyboardKey.keyJ): () {
+                          final pos = yakushiinPlayer.state.position;
+                          final newPos = pos - const Duration(seconds: 10);
+                          yakushiinPlayer.seek(
+                            newPos < Duration.zero ? Duration.zero : newPos,
+                          );
+                        },
+                        // L：前进10秒
+                        LogicalKeySet(LogicalKeyboardKey.keyL): () {
+                          final pos = yakushiinPlayer.state.position;
+                          final dur = yakushiinPlayer.state.duration;
+                          final newPos = pos + const Duration(seconds: 10);
+                          yakushiinPlayer.seek(newPos > dur ? dur : newPos);
+                        },
+                        // 数字键 0-9 快速定位
+                        LogicalKeySet(LogicalKeyboardKey.digit0):
+                            () => yakushiinPlayer.seek(Duration.zero),
+                        LogicalKeySet(LogicalKeyboardKey.digit1):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.1,
+                            ),
+                        LogicalKeySet(LogicalKeyboardKey.digit2):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.2,
+                            ),
+                        LogicalKeySet(LogicalKeyboardKey.digit3):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.3,
+                            ),
+                        LogicalKeySet(LogicalKeyboardKey.digit4):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.4,
+                            ),
+                        LogicalKeySet(LogicalKeyboardKey.digit5):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.5,
+                            ),
+                        LogicalKeySet(LogicalKeyboardKey.digit6):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.6,
+                            ),
+                        LogicalKeySet(LogicalKeyboardKey.digit7):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.7,
+                            ),
+                        LogicalKeySet(LogicalKeyboardKey.digit8):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.8,
+                            ),
+                        LogicalKeySet(LogicalKeyboardKey.digit9):
+                            () => yakushiinPlayer.seek(
+                              yakushiinPlayer.state.duration * 0.9,
+                            ),
+                      },
                       hideMouseOnControlsRemoval: true,
                       displaySeekBar: true,
                       automaticallyImplySkipNextButton: true,
@@ -1129,37 +1374,46 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                         MaterialDesktopFullscreenButton(),
                       ],
                     ),
-                    child: SafeArea(
-                      child: SizedBox(
-                        width: MediaQuery.of(context).size.width,
-                        height: MediaQuery.of(context).size.width * 9.0 / 16.0,
-                        child: Video(
-                          controller: yakushiinPlayerController,
-                          subtitleViewConfiguration:
-                              const SubtitleViewConfiguration(
-                                style: TextStyle(
-                                  height: 1.4,
-                                  fontSize: 60.0,
-                                  letterSpacing: 0.0,
-                                  wordSpacing: 0.0,
-                                  color: Color(0xffffffff),
-                                  fontWeight: FontWeight.normal,
-                                  fontFamily: fontSimkaiFamily,
-                                  backgroundColor: Color(0xaa000000),
-                                  overflow: TextOverflow.clip,
-                                ),
-                                textAlign: TextAlign.center,
-                                padding: EdgeInsets.fromLTRB(
+                    child: Builder(
+                      builder: (context) {
+                        return ExcludeSemantics(
+                          child: SafeArea(
+                            child: SizedBox(
+                              width: MediaQuery.of(context).size.width,
+                              height:
+                                  MediaQuery.of(context).size.width *
+                                  9.0 /
                                   16.0,
-                                  24.0,
-                                  16.0,
-                                  0.0,
-                                ),
+                              child: Video(
+                                controller: yakushiinPlayerController,
+                                subtitleViewConfiguration:
+                                    const SubtitleViewConfiguration(
+                                      style: TextStyle(
+                                        height: 1.4,
+                                        fontSize: 60.0,
+                                        letterSpacing: 0.0,
+                                        wordSpacing: 0.0,
+                                        color: Color(0xffffffff),
+                                        fontWeight: FontWeight.normal,
+                                        fontFamily: fontSimkaiFamily,
+                                        backgroundColor: Color(0xaa000000),
+                                        overflow: TextOverflow.clip,
+                                      ),
+                                      textAlign: TextAlign.center,
+                                      padding: EdgeInsets.fromLTRB(
+                                        16.0,
+                                        24.0,
+                                        16.0,
+                                        0.0,
+                                      ),
+                                    ),
+                                pauseUponEnteringBackgroundMode: false,
+                                resumeUponEnteringForegroundMode: false,
                               ),
-                          pauseUponEnteringBackgroundMode: false,
-                          resumeUponEnteringForegroundMode: false,
-                        ),
-                      ),
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   )
                   : MaterialVideoControlsTheme(
@@ -1234,37 +1488,46 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                         MaterialFullscreenButton(),
                       ],
                     ),
-                    child: SafeArea(
-                      child: SizedBox(
-                        width: MediaQuery.of(context).size.width,
-                        height: MediaQuery.of(context).size.width * 9.0 / 16.0,
-                        child: Video(
-                          controller: yakushiinPlayerController,
-                          subtitleViewConfiguration:
-                              const SubtitleViewConfiguration(
-                                style: TextStyle(
-                                  height: 1.4,
-                                  fontSize: 60.0,
-                                  letterSpacing: 0.0,
-                                  wordSpacing: 0.0,
-                                  color: Color(0xffffffff),
-                                  fontWeight: FontWeight.normal,
-                                  fontFamily: fontSimkaiFamily,
-                                  backgroundColor: Color(0xaa000000),
-                                  overflow: TextOverflow.clip,
-                                ),
-                                textAlign: TextAlign.center,
-                                padding: EdgeInsets.fromLTRB(
+                    child: Builder(
+                      builder: (context) {
+                        return ExcludeSemantics(
+                          child: SafeArea(
+                            child: SizedBox(
+                              width: MediaQuery.of(context).size.width,
+                              height:
+                                  MediaQuery.of(context).size.width *
+                                  9.0 /
                                   16.0,
-                                  24.0,
-                                  16.0,
-                                  0.0,
-                                ),
+                              child: Video(
+                                controller: yakushiinPlayerController,
+                                subtitleViewConfiguration:
+                                    const SubtitleViewConfiguration(
+                                      style: TextStyle(
+                                        height: 1.4,
+                                        fontSize: 60.0,
+                                        letterSpacing: 0.0,
+                                        wordSpacing: 0.0,
+                                        color: Color(0xffffffff),
+                                        fontWeight: FontWeight.normal,
+                                        fontFamily: fontSimkaiFamily,
+                                        backgroundColor: Color(0xaa000000),
+                                        overflow: TextOverflow.clip,
+                                      ),
+                                      textAlign: TextAlign.center,
+                                      padding: EdgeInsets.fromLTRB(
+                                        16.0,
+                                        24.0,
+                                        16.0,
+                                        0.0,
+                                      ),
+                                    ),
+                                pauseUponEnteringBackgroundMode: false,
+                                resumeUponEnteringForegroundMode: false,
                               ),
-                          pauseUponEnteringBackgroundMode: false,
-                          resumeUponEnteringForegroundMode: false,
-                        ),
-                      ),
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
               const Divider(),
@@ -1480,51 +1743,108 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   ElevatedButton.icon(
-                    onPressed: () async {
-                      List<Widget> musicWidgetList = [];
-                      for (
-                        var i = 0;
-                        i < ref.watch(currentPlayList).musicList!.length;
-                        i++
-                      ) {
-                        WidgetStateProperty<Color?>? btnBackgroundColor;
-                        if (nowPlayingIndex + 1 == i + 1) {
-                          btnBackgroundColor = WidgetStateProperty.all(
-                            Colors.grey[300],
-                          );
-                        }
-                        var thisMusicInfo = ElevatedButton(
-                          style: ButtonStyle(
-                            backgroundColor: btnBackgroundColor,
-                          ),
-                          onPressed: () async {
-                            await yakushiinPlayer.jump(i);
-                          },
-                          child: Row(
-                            children: [
-                              Text("${i + 1}", style: styleFontSimkai),
-                              VerticalDivider(),
-                              Expanded(
-                                child: Text(
-                                  "${ref.watch(currentPlayList).musicList![i].videoName}",
-                                  style: styleFontSimkai,
-                                ),
+                    onPressed: () {
+                      final playlist = ref.read(currentPlayList);
+                      final currentIndex = nowPlayingIndex;
+                      const double buttonHeight = 32.0; // 按钮自身高度
+                      const double gapHeight = 10.0; // 项间距
+                      const double itemExtent =
+                          buttonHeight + gapHeight; // 总项高 42.0
+
+                      final scrollController = ScrollController();
+
+                      showDialog(
+                        context: context,
+                        builder: (ctx) {
+                          return AlertDialog(
+                            title: Text(
+                              "当前歌单：${playlist.playListName} (${currentIndex + 1}/${playlist.musicList!.length})",
+                            ),
+                            content: SizedBox(
+                              width: double.maxFinite,
+                              child: ListView.builder(
+                                controller: scrollController,
+                                itemCount: playlist.musicList!.length,
+                                itemExtent: itemExtent, // 每个项占用固定高度
+                                itemBuilder: (context, index) {
+                                  final isNowPlaying = index == currentIndex;
+                                  return Column(
+                                    children: [
+                                      // 按钮固定在 32 高度内
+                                      SizedBox(
+                                        height: buttonHeight,
+                                        child: ElevatedButton(
+                                          style: ButtonStyle(
+                                            backgroundColor:
+                                                isNowPlaying
+                                                    ? WidgetStateProperty.all(
+                                                      Colors.grey[300],
+                                                    )
+                                                    : null,
+                                            padding: WidgetStateProperty.all(
+                                              const EdgeInsets.symmetric(
+                                                horizontal: 12,
+                                                vertical: 0,
+                                              ),
+                                            ),
+                                          ),
+                                          onPressed: () {
+                                            yakushiinPlayer.jump(index);
+                                            Navigator.of(context).pop();
+                                          },
+                                          child: Row(
+                                            children: [
+                                              Text(
+                                                "${index + 1}",
+                                                style: styleFontSimkai,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Expanded(
+                                                child: Text(
+                                                  playlist
+                                                          .musicList![index]
+                                                          .videoName ??
+                                                      '',
+                                                  style: styleFontSimkai,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                      // 间距
+                                      const SizedBox(height: gapHeight),
+                                    ],
+                                  );
+                                },
+                              ),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.of(ctx).pop(),
+                                child: const Text("返回"),
                               ),
                             ],
-                          ),
-                        );
-                        musicWidgetList.add(thisMusicInfo);
-                        musicWidgetList.add(SizedBox(height: 10));
-                      }
-                      await commonQuestionDialog(
-                        context,
-                        "当前歌单：${ref.watch(currentPlayList).playListName} (${ref.watch(nowPlayingIndexProvider) + 1}/${ref.watch(currentPlayList).musicList?.length == null ? "N/a" : ref.watch(currentPlayList).musicList!.length})",
-                        musicWidgetList,
-                        "",
-                        "返回",
-                        doNotShowCancelText: true,
-                        makeDialogScrollView: true,
+                          );
+                        },
                       );
+
+                      // 自动滚动到当前歌曲
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (!scrollController.hasClients) return;
+                        final viewportHeight =
+                            scrollController.position.viewportDimension;
+                        final targetOffset =
+                            (currentIndex * itemExtent) - viewportHeight * 0.2;
+                        final clampedOffset = targetOffset.clamp(
+                          scrollController.position.minScrollExtent,
+                          scrollController.position.maxScrollExtent,
+                        );
+                        scrollController.jumpTo(clampedOffset);
+                      });
                     },
                     label: Text("当前歌单", style: styleFontSimkai),
                     icon: Icon(Icons.list_rounded),
@@ -1584,122 +1904,156 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                   children: [PinWindowButton()],
                 ),
               const Divider(),
-              Column(
-                children: [Text("以下是调试信息:", style: styleFontSimkaiCyanBold)],
+              ExcludeSemantics(
+                child: Column(
+                  children: [Text("以下是调试信息:", style: styleFontSimkaiCyanBold)],
+                ),
               ),
               const Divider(),
-              Column(
-                children: [
-                  Text(
-                    "当前缓存状态: $nowBufferStatus",
-                    style: styleFontSimkaiBoldLarge,
-                  ),
-                ],
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    Text("tvMode: $tvMode", style: styleFontSimkaiBoldLarge),
+                  ],
+                ),
               ),
               const Divider(),
-              Column(
-                children: [
-                  Text(
-                    "当前缓存位置:$nowBufferedDuration",
-                    style: styleFontSimkaiBoldLarge,
-                  ),
-                ],
-              ),
-              const Divider(),
-              Column(
-                children: [
-                  Text(
-                    "当前视频参数: 硬解 ${nowPlayingVideoParams.hwPixelformat} | 软解 ${nowPlayingVideoParams.pixelformat} | 宽 ${nowPlayingVideoParams.w} | 高 ${nowPlayingVideoParams.h} | 方向 ${nowPlayingVideoParams.rotate} | 修正宽 ${nowPlayingVideoParams.dw} | 修正高 ${nowPlayingVideoParams.dh}",
-                    style: styleFontSimkaiBoldLarge,
-                  ),
-                ],
-              ),
-              const Divider(),
-              Column(
-                children: [
-                  Text(
-                    "当前音频参数: 格式 ${nowPlayingAudioParams.format} | 通道数 ${nowPlayingAudioParams.channelCount} | 通道 ${nowPlayingAudioParams.channels} | 采样率 ${nowPlayingAudioParams.sampleRate}",
-                    style: styleFontSimkaiBoldLarge,
-                  ),
-                ],
-              ),
-              const Divider(),
-              Column(
-                children: [
-                  Text(
-                    "当前输出设备:${nowPlayingAudioDevice.name}-${nowPlayingAudioDevice.description}",
-                    style: styleFontSimkaiBoldLarge,
-                  ),
-                ],
-              ),
-              const Divider(),
-              Column(
-                children: [
-                  Text(
-                    "可用输出设备:${nowPlayingAudioDevicesAvailable.toString()}",
-                    style: styleFontSimkaiBoldLarge,
-                  ),
-                ],
-              ),
-              const Divider(),
-              Column(
-                children: [
-                  if (Platform.isAndroid)
+              ExcludeSemantics(
+                child: Column(
+                  children: [
                     Text(
-                      'Audio Stream: $_audioStream',
+                      "当前缓存状态: $nowBufferStatus",
                       style: styleFontSimkaiBoldLarge,
                     ),
-                  if (Platform.isIOS)
+                  ],
+                ),
+              ),
+              const Divider(),
+              ExcludeSemantics(
+                child: Column(
+                  children: [
                     Text(
-                      'Audio Session Category: $_audioSessionCategory',
+                      "当前缓存位置:$nowBufferedDuration",
                       style: styleFontSimkaiBoldLarge,
                     ),
-                ],
+                  ],
+                ),
               ),
               const Divider(),
-              Column(
-                children: [
-                  Text(
-                    "计步:当前状态=> $pedometerStatus | 状态改变时间=>$pedometerTimeStampStatusChanged",
-                    style: styleFontSimkaiBoldLarge,
-                  ),
-                ],
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    Text(
+                      "当前视频参数: 硬解 ${nowPlayingVideoParams.hwPixelformat} | 软解 ${nowPlayingVideoParams.pixelformat} | 宽 ${nowPlayingVideoParams.w} | 高 ${nowPlayingVideoParams.h} | 方向 ${nowPlayingVideoParams.rotate} | 修正宽 ${nowPlayingVideoParams.dw} | 修正高 ${nowPlayingVideoParams.dh}",
+                      style: styleFontSimkaiBoldLarge,
+                    ),
+                  ],
+                ),
               ),
               const Divider(),
-              Column(
-                children: [
-                  Text(
-                    "计步:步数=> $pedometerStep | 状态改变时间=>$pedometerTimeStampStepChanged",
-                    style: styleFontSimkaiBoldLarge,
-                  ),
-                ],
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    Text(
+                      "当前音频参数: 格式 ${nowPlayingAudioParams.format} | 通道数 ${nowPlayingAudioParams.channelCount} | 通道 ${nowPlayingAudioParams.channels} | 采样率 ${nowPlayingAudioParams.sampleRate}",
+                      style: styleFontSimkaiBoldLarge,
+                    ),
+                  ],
+                ),
               ),
               const Divider(),
-              Column(
-                children: [
-                  Text(
-                    "定位:精度=> ${locationSettings.accuracy} | 经度=>${currentPosition == null ? "unknown" : currentPosition?.longitude} | 纬度=>${currentPosition == null ? "unknown" : currentPosition?.latitude}",
-                    style: styleFontSimkaiBoldLarge,
-                  ),
-                ],
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    Text(
+                      "当前输出设备:${nowPlayingAudioDevice.name}-${nowPlayingAudioDevice.description}",
+                      style: styleFontSimkaiBoldLarge,
+                    ),
+                  ],
+                ),
               ),
               const Divider(),
-              Column(
-                children: [
-                  Text(
-                    "天气: 国家=>${currentWeather == null ? "unknown" : currentWeather?.country} | 位置=> ${currentWeather == null ? "unknown" : currentWeather?.areaName} | 日期=> ${currentWeather == null ? "unknown" : currentWeather?.date}",
-                    style: styleFontSimkaiBoldLarge,
-                  ),
-                ],
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    Text(
+                      "可用输出设备:${nowPlayingAudioDevicesAvailable.toString()}",
+                      style: styleFontSimkaiBoldLarge,
+                    ),
+                  ],
+                ),
               ),
               const Divider(),
-              Column(
-                children: [
-                  Text(
-                    "天气: 描述=>${currentWeather == null ? "unknown" : currentWeather?.weatherDescription} | 温度=> ${currentWeather == null ? "unknown" : currentWeather?.temperature} | 湿度=> ${currentWeather == null ? "unknown" : currentWeather?.humidity}",
-                    style: styleFontSimkaiBoldLarge,
-                  ),
-                ],
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    if (Platform.isAndroid)
+                      Text(
+                        'Audio Stream: $_audioStream',
+                        style: styleFontSimkaiBoldLarge,
+                      ),
+                    if (Platform.isIOS)
+                      Text(
+                        'Audio Session Category: $_audioSessionCategory',
+                        style: styleFontSimkaiBoldLarge,
+                      ),
+                  ],
+                ),
+              ),
+              const Divider(),
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    Text(
+                      "计步:当前状态=> $pedometerStatus | 状态改变时间=>$pedometerTimeStampStatusChanged",
+                      style: styleFontSimkaiBoldLarge,
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(),
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    Text(
+                      "计步:步数=> $pedometerStep | 状态改变时间=>$pedometerTimeStampStepChanged",
+                      style: styleFontSimkaiBoldLarge,
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(),
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    Text(
+                      "定位:精度=> ${locationSettings.accuracy} | 经度=>${currentPosition == null ? "unknown" : currentPosition?.longitude} | 纬度=>${currentPosition == null ? "unknown" : currentPosition?.latitude}",
+                      style: styleFontSimkaiBoldLarge,
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(),
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    Text(
+                      "天气: 国家=>${currentWeather == null ? "unknown" : currentWeather?.country} | 位置=> ${currentWeather == null ? "unknown" : currentWeather?.areaName} | 日期=> ${currentWeather == null ? "unknown" : currentWeather?.date}",
+                      style: styleFontSimkaiBoldLarge,
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(),
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    Text(
+                      "天气: 描述=>${currentWeather == null ? "unknown" : currentWeather?.weatherDescription} | 温度=> ${currentWeather == null ? "unknown" : currentWeather?.temperature} | 湿度=> ${currentWeather == null ? "unknown" : currentWeather?.humidity}",
+                      style: styleFontSimkaiBoldLarge,
+                    ),
+                  ],
+                ),
               ),
               const Divider(),
             ],

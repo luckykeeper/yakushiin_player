@@ -5,8 +5,8 @@
 // @Project       : yakushiin_player
 
 const appIdentity = "YakushiinPlayer";
-const appVersion = '1.0.1.1';
-const buildTime = "Build20260215";
+const appVersion = '1.0.1.2';
+const buildTime = "Build20260503";
 String yakushininPlayerUserAgent = "$appIdentity ${appVersion}_$buildTime";
 Map<String, String> yakushininPlayerUserAgentMap = <String, String>{
   "User-Agent": "$appIdentity ${appVersion}_$buildTime",

@@ -23,6 +23,7 @@ import 'package:yakushiin_player/page/settings_page.dart';
 import 'package:yakushiin_player/page/sync_page.dart';
 import 'package:yakushiin_player/page/welcome_page.dart';
 import 'package:yakushiin_player/page/yakushiin_player.dart';
+import 'package:yakushiin_player/theme/font.dart';
 
 void main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
@@ -159,6 +160,7 @@ class YakushiinPlayer extends ConsumerWidget {
           primary: Colors.cyan,
           surfaceContainerLow: Color(0xFFF2FBFC),
         ),
+        fontFamily: fontSimkaiFamily,
       ),
       dark: ThemeData(
         useMaterial3: true,
@@ -167,6 +169,7 @@ class YakushiinPlayer extends ConsumerWidget {
           primary: Colors.cyan,
           surfaceContainerLow: Color(0xFF152324),
         ),
+        fontFamily: fontSimkaiFamily,
       ),
       initial: savedThemeMode ?? AdaptiveThemeMode.system,
       builder:

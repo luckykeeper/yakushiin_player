@@ -5,7 +5,7 @@ nextTypeId: 3
 types:
   GatewaySetting:
     typeId: 0
-    nextIndex: 4
+    nextIndex: 5
     fields:
       id:
         index: 0
@@ -15,6 +15,8 @@ types:
         index: 2
       weatherApiToken:
         index: 3
+      tvMode:
+        index: 4
   NoaPlayerV2PlayList:
     typeId: 1
     nextIndex: 3

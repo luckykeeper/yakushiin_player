@@ -8,7 +8,7 @@ part of 'hive_adapters.dart';
 
 class GatewaySettingAdapter extends TypeAdapter<GatewaySetting> {
   @override
-  final int typeId = 0;
+  final typeId = 0;
 
   @override
   GatewaySetting read(BinaryReader reader) {
@@ -21,13 +21,14 @@ class GatewaySettingAdapter extends TypeAdapter<GatewaySetting> {
       gatewayAddress: fields[1] as String,
       gatewayToken: fields[2] as String,
       weatherApiToken: fields[3] as String,
+      tvMode: fields[4] == null ? false : fields[4] as bool,
     );
   }
 
   @override
   void write(BinaryWriter writer, GatewaySetting obj) {
     writer
-      ..writeByte(4)
+      ..writeByte(5)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -35,7 +36,9 @@ class GatewaySettingAdapter extends TypeAdapter<GatewaySetting> {
       ..writeByte(2)
       ..write(obj.gatewayToken)
       ..writeByte(3)
-      ..write(obj.weatherApiToken);
+      ..write(obj.weatherApiToken)
+      ..writeByte(4)
+      ..write(obj.tvMode);
   }
 
   @override
@@ -51,7 +54,7 @@ class GatewaySettingAdapter extends TypeAdapter<GatewaySetting> {
 
 class NoaPlayerV2PlayListAdapter extends TypeAdapter<NoaPlayerV2PlayList> {
   @override
-  final int typeId = 1;
+  final typeId = 1;
 
   @override
   NoaPlayerV2PlayList read(BinaryReader reader) {
@@ -91,7 +94,7 @@ class NoaPlayerV2PlayListAdapter extends TypeAdapter<NoaPlayerV2PlayList> {
 
 class NoaPlayerV2MusicAdapter extends TypeAdapter<NoaPlayerV2Music> {
   @override
-  final int typeId = 2;
+  final typeId = 2;
 
   @override
   NoaPlayerV2Music read(BinaryReader reader) {
