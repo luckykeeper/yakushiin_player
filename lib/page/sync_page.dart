@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_msg.dart';
+import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_playlist.dart';
 import 'package:yakushiin_player/model/runtime.dart';
 import 'package:yakushiin_player/model/version.dart';
 import 'package:yakushiin_player/model/yakushiin_logger.dart';
@@ -350,12 +351,33 @@ class _SyncPlayListPageState extends State<SyncPlayListPage> {
                         title: "✅从网关拉取歌单信息成功！即将开始下载，请不要退出此页面！",
                         titleStyle: styleFontSimkai,
                       );
-                      await yakushiinRuntimeEnvironment.dataEngineForV2PlayList
-                          .clear();
+                      // 修复：原子化写入，避免 clear+逐条add 长窗口及中途退出导致丢失
+                      // 使用 putAll 以 playListName 为 key，与播放页保持一致（去重且无clear长窗口）
+                      try {
+                        final box =
+                            yakushiinRuntimeEnvironment.dataEngineForV2PlayList;
+                        final putMap = <String, NoaPlayerV2PlayList>{
+                          for (var p in v2Msg.playList!)
+                            if (p.playListName != null &&
+                                p.playListName!.isNotEmpty)
+                              p.playListName!: p
+                        };
+                        // 清理旧 int key 数据，避免新旧混存导致计数异常
+                        await box.clear();
+                        await box.putAll(putMap);
+                        yakushiinLogger.i("同步写入歌单 ${putMap.length} 个，当前总数 ${box.length}");
+                      } catch (e) {
+                        yakushiinLogger.e("同步写入歌单失败：$e");
+                        BotToast.showSimpleNotification(
+                          duration: const Duration(seconds: 2),
+                          hideCloseButton: false,
+                          backgroundColor: Colors.pink[200],
+                          title: "⛔同步写入歌单失败：$e",
+                          titleStyle: styleFontSimkai,
+                        );
+                        return;
+                      }
                       for (var i = 0; i < v2Msg.playList!.length; i++) {
-                        await yakushiinRuntimeEnvironment
-                            .dataEngineForV2PlayList
-                            .add(v2Msg.playList![i]);
                         for (var music in v2Msg.playList![i].musicList!) {
                           try {
                             setState(() {
@@ -441,11 +463,12 @@ class _SyncPlayListPageState extends State<SyncPlayListPage> {
                         }
                       }
                       // 清空缓存文件夹
-                      if (!await yakushiinRuntimeEnvironment.cacheDir
-                          .exists()) {
+                      if (await yakushiinRuntimeEnvironment.cacheDir.exists()) {
                         await yakushiinRuntimeEnvironment.cacheDir.delete(
                           recursive: true,
                         );
+                      }
+                      if (!await yakushiinRuntimeEnvironment.cacheDir.exists()) {
                         await yakushiinRuntimeEnvironment.cacheDir.create();
                       }
                       // 清空没有 md5 索引的文件
@@ -554,9 +577,18 @@ class _SyncPlayListPageState extends State<SyncPlayListPage> {
                           await yakushiinRuntimeEnvironment
                               .dataEngineForV2PlayList
                               .clear();
-                          await yakushiinRuntimeEnvironment.musicDir.delete(
-                            recursive: true,
-                          );
+                          if (await yakushiinRuntimeEnvironment.musicDir
+                              .exists()) {
+                            await yakushiinRuntimeEnvironment.musicDir.delete(
+                              recursive: true,
+                            );
+                          }
+                          if (!await yakushiinRuntimeEnvironment.musicDir
+                              .exists()) {
+                            await yakushiinRuntimeEnvironment.musicDir.create(
+                              recursive: true,
+                            );
+                          }
                           BotToast.showSimpleNotification(
                             duration: const Duration(seconds: 2),
                             hideCloseButton: false,
@@ -564,7 +596,7 @@ class _SyncPlayListPageState extends State<SyncPlayListPage> {
                             title: "✅缓存清理完成！",
                             titleStyle: styleFontSimkai,
                           );
-                          updateInfo();
+                          await updateInfo();
                           commonSuccessDialog(
                             context,
                             "✅缓存清理完成",

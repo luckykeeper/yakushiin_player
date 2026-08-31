@@ -61,6 +61,9 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
   Timer? checkPlayListEndTimer;
   Timer? checkPlayingMusicEndTimer;
 
+  // 歌单持久化并发锁，避免 clear+add 非原子导致的 3->2 丢失
+  bool _isPersistingPlayList = false;
+
   // 电视模式，调整上下键的默认行为
   bool tvMode = false;
 
@@ -524,40 +527,49 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
           ref.read(currentPlayList).musicList![i].nowPlaying = false;
         }
         ref.read(currentPlayList).musicList![playList.index].nowPlaying = true;
-        // 更新播放状态到数据库（去重，确保每个播放列表名称唯一）
-        final box = yakushiinRuntimeEnvironment.dataEngineForV2PlayList;
-        final currentList = ref.read(currentPlayList); // 使用 read 获取当前快照
 
-        // 1. 读取所有已有播放列表，放入 Map（自动按名称去重）
-        final map = <String, NoaPlayerV2PlayList>{};
-        for (int i = 0; i < box.length; i++) {
-          final item = box.getAt(i);
-          if (item != null) {
-            map["${item.playListName}"] = item; // 同名键会覆盖旧值，自然去重
+        // 修复：原 clear+add 非原子且并发不安全，偶现 3->2 丢失
+        // 现改为以 playListName 为 key 的原子 put，并加锁防止并发写
+        if (_isPersistingPlayList) {
+          yakushiinLogger.w("跳过本次回写，上一回写未完成，避免并发丢失");
+          if (mounted) setState(() {});
+          return;
+        }
+        _isPersistingPlayList = true;
+        try {
+          final box = yakushiinRuntimeEnvironment.dataEngineForV2PlayList;
+          final currentList = ref.read(currentPlayList);
+          final key = currentList.playListName;
+          if (key == null || key.isEmpty) {
+            yakushiinLogger.w("回写跳过：playListName 为空");
+            return;
           }
-        }
-
-        // 2. 用当前播放列表覆盖（或新增）对应名称的记录
-        map["${currentList.playListName}"] = NoaPlayerV2PlayList(
-          id: currentList.id,
-          playListName: currentList.playListName,
-          musicList: currentList.musicList, // 此时 nowPlaying 已更新
-        );
-
-        // 3. 清空数据库，重新插入去重后的所有播放列表
-        await box.clear();
-        for (final item in map.values) {
-          // 必须创建全新实例（Hive 要求）
-          await box.add(
-            NoaPlayerV2PlayList(
-              id: item.id,
-              playListName: item.playListName,
-              musicList: item.musicList,
-            ),
+          // 兼容旧数据：旧版使用 int 自增 key，新版使用 playListName 字符串 key
+          // 若存在同名旧 int key 条目，删除旧条目避免重复计数
+          final keysToDelete = <dynamic>[];
+          for (var k in box.keys) {
+            if (k == key) continue;
+            final item = box.get(k);
+            if (item != null && item.playListName == key && k is int) {
+              keysToDelete.add(k);
+            }
+          }
+          final toSave = NoaPlayerV2PlayList(
+            id: currentList.id,
+            playListName: currentList.playListName,
+            musicList: currentList.musicList,
           );
+          await box.put(key, toSave);
+          for (var k in keysToDelete) {
+            await box.delete(k);
+            yakushiinLogger.i("清理旧 int key $k 的同名歌单 $key");
+          }
+          yakushiinLogger.i("回写数据库完成，当前播放列表数量：${box.length}，当前歌单：$key");
+        } catch (e, st) {
+          yakushiinLogger.e("回写数据库失败：$e\n$st");
+        } finally {
+          _isPersistingPlayList = false;
         }
-
-        yakushiinLogger.i("回写数据库完成，当前播放列表数量：${box.length}");
 
         if (mounted) {
           setState(() {});
