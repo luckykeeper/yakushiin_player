@@ -25,8 +25,7 @@ import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_playlist.
 import 'package:yakushiin_player/model/runtime.dart';
 import 'package:yakushiin_player/model/version.dart';
 import 'package:yakushiin_player/model/yakushiin_background_player.dart';
-import 'package:yakushiin_player/model/yakushiin_logger.dart';
-import 'package:yakushiin_player/model/yakushiin_windows_feature_window_pin_top.dart';
+import 'package:yakushiin_player/model/yakushiin_logger.dart';import 'package:yakushiin_player/model/yakushiin_windows_feature_window_pin_top.dart';
 import 'package:yakushiin_player/theme/font.dart';
 import 'package:yakushiin_player/yakushiin_widgets/clock.dart';
 import 'package:yakushiin_player/yakushiin_widgets/weather_icon.dart';
@@ -81,6 +80,9 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
   int pedometerStep = 0;
   DateTime pedometerTimeStampStepChanged = DateTime.now();
   DateTime pedometerTimeStampStatusChanged = DateTime.now();
+
+  // 页面底部日志显示区域
+  final logAreaScrollController = ScrollController();
 
   void initPedometerPlatformState() {
     _pedestrianStatusStream = Pedometer.pedestrianStatusStream;
@@ -788,6 +790,7 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
   @override
   void dispose() {
     WakelockPlus.disable();
+    logAreaScrollController.dispose();
     try {
       yakushiinPlayer.dispose();
     } catch (e) {
@@ -2054,6 +2057,47 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                       style: styleFontSimkaiBoldLarge,
                     ),
                   ],
+                ),
+              ),
+              const Divider(),
+              ExcludeSemantics(
+                child: Column(
+                  children: [
+                    Text(
+                      "运行日志（最新在最上，最多显示 ${YakushiinLogBuffer.maxLines} 行）：",
+                      style: styleFontSimkaiCyanBold,
+                    ),
+                  ],
+                ),
+              ),
+              // 日志显示区域：限制高度不撑爆页面，内部可滚动，防止日志刷屏卡顿
+              Container(
+                height: 220,
+                margin: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? Colors.black
+                      : Colors.grey[200],
+                  border: Border.all(color: Colors.cyan, width: 1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: ValueListenableBuilder<String>(
+                  valueListenable: yakushiinLogBuffer.text,
+                  builder: (context, logText, _) {
+                    return SingleChildScrollView(
+                      controller: logAreaScrollController,
+                      child: SelectableText(
+                        logText.isEmpty ? "暂无日志" : logText,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          height: 1.3,
+                          fontFamily: 'monospace',
+                          color: Color(0xFF30FF30),
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
               const Divider(),

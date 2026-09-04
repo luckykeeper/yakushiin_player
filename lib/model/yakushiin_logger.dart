@@ -4,8 +4,10 @@
 // @Email         : luckykeeper@luckykeeper.site
 // @Project       : yakushiin_player
 
+import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
 import 'package:yakushiin_player/model/runtime.dart';
 
@@ -18,10 +20,62 @@ var yakushiinLogger = Logger(
     printEmojis: true,
     dateTimeFormat: DateTimeFormat.dateAndTime,
   ),
-  output: MultiOutput([ConsoleOutput(), yakushiinLoggerInstance]),
+  output: MultiOutput([
+    ConsoleOutput(),
+    yakushiinLoggerInstance,
+    yakushiinLogBuffer,
+  ]),
 );
 
 var yakushiinLoggerInstance = YakushiinLogger();
+
+/// 内存日志缓冲（供播放页日志区域展示，最新在最上，限制最大行数防卡顿）
+var yakushiinLogBuffer = YakushiinLogBuffer();
+
+class YakushiinLogBuffer extends LogOutput {
+  /// 缓冲区最大行数，超出后丢弃最旧的日志
+  static const int maxLines = 200;
+
+  /// 合并刷新间隔，避免高频日志频繁触发 UI 重建
+  static const Duration flushInterval = Duration(milliseconds: 300);
+
+  /// 当前缓冲的日志文本（最新在最上），UI 通过 ValueListenableBuilder 监听
+  final ValueNotifier<String> text = ValueNotifier<String>("");
+
+  final List<String> _lines = [];
+  final List<String> _pending = [];
+  Timer? _flushTimer;
+
+  @override
+  void output(OutputEvent event) {
+    final eventTime = event.origin.time;
+    final timeText =
+        "${eventTime.hour.toString().padLeft(2, '0')}:"
+        "${eventTime.minute.toString().padLeft(2, '0')}:"
+        "${eventTime.second.toString().padLeft(2, '0')}";
+    final levelText = event.origin.level.name.toUpperCase();
+    final errorText = event.origin.error == null
+        ? ""
+        : " | ${event.origin.error}";
+    final line = "[$timeText][$levelText] ${event.origin.message}$errorText";
+    // 最新日志插到最前面
+    _pending.insert(0, line);
+    _flushTimer ??= Timer(flushInterval, _flush);
+  }
+
+  void _flush() {
+    _flushTimer = null;
+    if (_pending.isEmpty) {
+      return;
+    }
+    _lines.insertAll(0, _pending);
+    _pending.clear();
+    if (_lines.length > maxLines) {
+      _lines.removeRange(maxLines, _lines.length);
+    }
+    text.value = _lines.join(Platform.lineTerminator);
+  }
+}
 
 class YakushiinLogger extends LogOutput {
   File? yakushiinLogFile;

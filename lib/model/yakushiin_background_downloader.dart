@@ -12,6 +12,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_msg.dart';
+import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_music.dart';
 import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_playlist.dart';
 import 'package:yakushiin_player/model/runtime.dart';
 import 'package:yakushiin_player/model/version.dart';
@@ -25,6 +26,7 @@ class YakushiinDownloadState {
   final double? downloadProgress;
   final int doneCount;
   final int totalCount;
+  final int skippedCount;
   final String message;
   final bool success;
 
@@ -34,6 +36,7 @@ class YakushiinDownloadState {
     this.downloadProgress,
     this.doneCount = 0,
     this.totalCount = 0,
+    this.skippedCount = 0,
     this.message = "",
     this.success = false,
   });
@@ -45,6 +48,7 @@ class YakushiinDownloadState {
     bool clearDownloadProgress = false,
     int? doneCount,
     int? totalCount,
+    int? skippedCount,
     String? message,
     bool? success,
   }) {
@@ -55,6 +59,7 @@ class YakushiinDownloadState {
           clearDownloadProgress ? null : (downloadProgress ?? this.downloadProgress),
       doneCount: doneCount ?? this.doneCount,
       totalCount: totalCount ?? this.totalCount,
+      skippedCount: skippedCount ?? this.skippedCount,
       message: message ?? this.message,
       success: success ?? this.success,
     );
@@ -79,6 +84,10 @@ class YakushiinBackgroundDownloader {
   static const String _channelName = "歌曲下载";
   static const Duration _retryDelay = Duration(seconds: 5);
 
+  /// 连续失败达到该次数后，重新拉取网关歌单确认歌曲是否仍然存在
+  /// （网关已删除的歌曲不再无限重试，按游离文件在收尾时清理）
+  static const int _gatewayRecheckAfterFailures = 3;
+
   final ValueNotifier<YakushiinDownloadState> progressNotifier =
       ValueNotifier<YakushiinDownloadState>(const YakushiinDownloadState());
 
@@ -88,6 +97,10 @@ class YakushiinBackgroundDownloader {
   FlutterLocalNotificationsPlugin? _notifications;
   int _lastNotifiedProgress = -1;
   DateTime _lastToastTime = DateTime.now();
+
+  /// 最新一次成功拉取的网关歌单数据（复核期间会更新），
+  /// 收尾落库与游离文件清理以它为准
+  NoaPlayerV2Msg? _latestV2Msg;
 
   /// 初始化通知（仅 Android），失败不影响下载功能本身
   Future<void> _initNotifications() async {
@@ -229,8 +242,14 @@ class YakushiinBackgroundDownloader {
     );
   }
 
-  /// 单文件下载（带无限重试，直到成功）
-  Future<bool> _downloadWithRetry(String url, String md5, String name) async {
+  /// 单文件下载（自动重试直到成功；连续失败达到阈值后向网关复核，
+  /// 若歌曲已被网关删除则停止重试，返回 false 交由收尾按游离文件清理）
+  Future<bool> _downloadWithRetry(
+    String url,
+    String md5,
+    String name,
+    Future<bool> Function()? gatewayStillExistsCheck,
+  ) async {
     var attempt = 0;
     while (true) {
       attempt++;
@@ -249,9 +268,62 @@ class YakushiinBackgroundDownloader {
           ),
         );
         _throttledToast("⛔$name 下载失败，将自动重试（第 $attempt 次）");
+        // 连续失败达到阈值：重新拉取网关歌单，确认歌曲是否已被删除
+        if (attempt >= _gatewayRecheckAfterFailures &&
+            gatewayStillExistsCheck != null) {
+          bool stillExists = true;
+          try {
+            stillExists = await gatewayStillExistsCheck();
+          } catch (e) {
+            yakushiinLogger.e("复核网关歌单异常，继续重试:$e");
+          }
+          if (!stillExists) {
+            yakushiinLogger.w(
+              "$name 已不在网关歌单中（网关已删除），停止重试，本地文件将在收尾时按游离文件清理",
+            );
+            _updateState(
+              progressNotifier.value.copyWith(
+                nowHandlingName: "⏭$name 已被网关删除，跳过下载",
+              ),
+            );
+            return false;
+          }
+          _updateState(
+            progressNotifier.value.copyWith(
+              nowHandlingName: "⛔$name 已复核仍在网关歌单中，继续重试...",
+            ),
+          );
+        }
         await Future.delayed(_retryDelay);
       }
     }
+  }
+
+  /// 重新拉取网关歌单，判断歌曲（音乐条目）是否仍然存在。
+  /// 拉取失败时不判定为已删除（返回 true 继续重试），同时更新最新网关数据缓存。
+  Future<bool> _isMusicStillInGateway(NoaPlayerV2Music music) async {
+    final fresh = await NoaPlayerV2Msg().getNoaHandlerVideoListV2();
+    if (!fresh.isSuccess || fresh.playList == null) {
+      yakushiinLogger.w("复核网关歌单失败，无法确认删除状态，继续重试");
+      return true;
+    }
+    // 复核成功即视为拿到最新网关数据，后续落库与游离清理以它为准
+    _latestV2Msg = fresh;
+    yakushiinLogger.i("复核网关歌单成功，当前歌单 ${fresh.playList!.length} 个");
+    for (final playList in fresh.playList!) {
+      for (final m in playList.musicList ?? const []) {
+        final urlMatched =
+            m.videoUrl != null && m.videoUrl!.isNotEmpty && m.videoUrl == music.videoUrl;
+        final md5Matched =
+            m.videoMd5 != null &&
+            m.videoMd5!.isNotEmpty &&
+            m.videoMd5 == music.videoMd5;
+        if (urlMatched || md5Matched) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   /// 单次下载尝试，失败抛异常交由重试逻辑处理
@@ -410,8 +482,9 @@ class YakushiinBackgroundDownloader {
         ),
       );
 
-      var aborted = false;
-      outer:
+      // 初始以本次拉取结果为最新网关数据，复核期间会更新
+      _latestV2Msg = v2Msg;
+      var skippedCount = 0;
       for (var i = 0; i < v2Msg.playList!.length; i++) {
         for (var music in v2Msg.playList![i].musicList!) {
           // 音乐
@@ -429,10 +502,32 @@ class YakushiinBackgroundDownloader {
               "${music.videoUrl}",
               "${music.videoMd5}",
               "${music.videoName}",
+              () => _isMusicStillInGateway(music),
             );
             if (!downloadOk) {
-              aborted = true;
-              break outer;
+              // 网关已删除：跳过，不重试，收尾时按游离文件清理
+              skippedCount++;
+              doneCount++;
+              _updateState(
+                progressNotifier.value.copyWith(
+                  skippedCount: skippedCount,
+                  doneCount: doneCount,
+                  clearDownloadProgress: true,
+                ),
+              );
+              // 网关已删除该音乐，其字幕也不再处理
+              if (music.subTitleMd5 != null && music.subTitleMd5!.isNotEmpty) {
+                skippedCount++;
+                doneCount++;
+                _updateState(
+                  progressNotifier.value.copyWith(
+                    skippedCount: skippedCount,
+                    doneCount: doneCount,
+                    clearDownloadProgress: true,
+                  ),
+                );
+              }
+              continue;
             }
           }
           doneCount++;
@@ -460,10 +555,20 @@ class YakushiinBackgroundDownloader {
                 "${music.subTitleUrl}",
                 "${music.subTitleMd5}",
                 "${music.videoName}-${music.subTitleName}",
+                () => _isMusicStillInGateway(music),
               );
               if (!downloadOk) {
-                aborted = true;
-                break outer;
+                // 网关已删除：跳过，不重试
+                skippedCount++;
+                doneCount++;
+                _updateState(
+                  progressNotifier.value.copyWith(
+                    skippedCount: skippedCount,
+                    doneCount: doneCount,
+                    clearDownloadProgress: true,
+                  ),
+                );
+                continue;
               }
             }
             doneCount++;
@@ -477,18 +582,20 @@ class YakushiinBackgroundDownloader {
         }
       }
 
-      if (aborted) {
-        // 理论上不会走到这里（重试直到成功），兜底处理
-        failMessage = "同步中止：存在无法下载的文件";
-        _updateState(
-          progressNotifier.value.copyWith(
-            running: false,
-            success: false,
-            message: failMessage,
-          ),
-        );
-        await _finishNotification("⛔同步失败", failMessage);
-        return;
+      // 落库以最新一次成功拉取的网关数据为准（复核期间网关可能有增删）
+      try {
+        final box = yakushiinRuntimeEnvironment.dataEngineForV2PlayList;
+        final fresh = _latestV2Msg ?? v2Msg;
+        final putMap = <String, NoaPlayerV2PlayList>{
+          for (var p in fresh.playList!)
+            if (p.playListName != null && p.playListName!.isNotEmpty)
+              p.playListName!: p
+        };
+        await box.clear();
+        await box.putAll(putMap);
+        yakushiinLogger.i("同步收尾落库歌单 ${putMap.length} 个，当前总数 ${box.length}");
+      } catch (e) {
+        yakushiinLogger.e("同步收尾落库歌单失败：$e");
       }
 
       // 清空缓存文件夹
@@ -498,15 +605,17 @@ class YakushiinBackgroundDownloader {
       if (!await yakushiinRuntimeEnvironment.cacheDir.exists()) {
         await yakushiinRuntimeEnvironment.cacheDir.create();
       }
-      // 清空没有 md5 索引的文件
+      // 清空没有 md5 索引的文件（以最新一次成功拉取的网关歌单为准，
+      // 网关已删除歌曲的本地文件在此按游离文件统一删除）
       var matchMusicMd5Count = 0;
       var matchSubTitleMd5Count = 0;
       var matchDeleteCount = 0;
+      final freshForCleanup = _latestV2Msg ?? v2Msg;
       var files = yakushiinRuntimeEnvironment.musicDir.listSync();
       for (var file in files) {
         if (file is File && await file.exists()) {
           var md5Matched = false;
-          for (var playList in v2Msg.playList!) {
+          for (var playList in freshForCleanup.playList!) {
             for (var i = 0; i < playList.musicList!.length; i++) {
               if (file.path ==
                   "${yakushiinRuntimeEnvironment.musicDir.path}${Platform.pathSeparator}${playList.musicList![i].videoMd5!}") {
@@ -534,21 +643,29 @@ class YakushiinBackgroundDownloader {
       yakushiinLogger.i("游离删除计数:$matchDeleteCount");
 
       ok = true;
+      final skippedInState = progressNotifier.value.skippedCount;
       _updateState(
         progressNotifier.value.copyWith(
           running: false,
           success: true,
           nowHandlingName: "全部处理完成!",
           clearDownloadProgress: true,
-          message: "全部同步完成",
+          message:
+              "全部同步完成${skippedInState > 0 ? "（跳过网关已删除文件 $skippedInState 个）" : ""}",
         ),
       );
-      await _finishNotification("✅全部同步完成", "本地歌单已经成功和网关同步啦~");
+      await _finishNotification(
+        "✅全部同步完成",
+        skippedInState > 0
+            ? "已跳过网关已删除文件 $skippedInState 个，本地游离文件已清理"
+            : "本地歌单已经成功和网关同步啦~",
+      );
       BotToast.showSimpleNotification(
         duration: const Duration(seconds: 3),
         hideCloseButton: false,
         backgroundColor: Colors.green[300],
-        title: "✅全部同步完成！",
+        title:
+            "✅全部同步完成！${skippedInState > 0 ? "（跳过网关已删除文件 $skippedInState 个）" : ""}",
         titleStyle: styleFontSimkai,
       );
     } catch (e) {

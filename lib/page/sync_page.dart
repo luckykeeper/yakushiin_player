@@ -11,7 +11,6 @@ import 'package:bot_toast/bot_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
-import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_msg.dart';
 import 'package:yakushiin_player/model/runtime.dart';
 import 'package:yakushiin_player/model/yakushiin_background_downloader.dart';
 import 'package:yakushiin_player/model/yakushiin_logger.dart';
@@ -35,6 +34,10 @@ class _SyncPlayListPageState extends State<SyncPlayListPage> {
   String gatewayMusicTotal = "未获取";
   String localCacheSize = "N/a";
 
+  // updateInfo 并发保护：避免并发调用共享计数器叠加导致计数异常
+  bool _updatingInfo = false;
+  bool _infoUpdatePending = false;
+
   // 全局后台下载器：离开本页面后下载依旧继续
   final YakushiinBackgroundDownloader yakushiinBackgroundDownloader =
       YakushiinBackgroundDownloader.instance;
@@ -43,52 +46,67 @@ class _SyncPlayListPageState extends State<SyncPlayListPage> {
   bool resultDialogShown = false;
 
   Future<void> updateInfo() async {
-    if (yakushiinRuntimeEnvironment.dataEngineForV2PlayList.length > 0) {
-      try {
-        NoaPlayerV2Msg localPlayList = NoaPlayerV2Msg(playList: []);
-        for (
-          var i = 0;
-          i < yakushiinRuntimeEnvironment.dataEngineForV2PlayList.length;
-          i++
-        ) {
-          var thisList = yakushiinRuntimeEnvironment.dataEngineForV2PlayList
-              .getAt(i);
-          if (thisList != null) {
-            localPlayList.playList!.add(thisList);
-          }
-        }
-        var gatewayMusicTotal = 0;
-        localMusicCacheCount = 0;
-        for (var playList in localPlayList.playList!) {
-          for (var i = 0; i < playList.musicList!.length; i++) {
-            gatewayMusicTotal++;
-            File thisMusicFile = File(
-              "${yakushiinRuntimeEnvironment.musicDir.path}${Platform.pathSeparator}${playList.musicList![i].videoMd5}",
-            );
-            if (await thisMusicFile.exists()) {
-              localMusicCacheCount++;
-            }
-          }
-        }
-        localMusicCount = gatewayMusicTotal;
-        setState(() {});
-      } catch (e) {
-        yakushiinLogger.e("initState 拉取数据库歌单信息失败！异常信息：$e");
-      }
-    } else {
-      setState(() {
-        localMusicCount = 0;
-        localMusicCacheCount = 0;
-      });
+    // 并发保护：只允许一个实例在跑，期间的新请求合并为一次补跑
+    if (_updatingInfo) {
+      _infoUpdatePending = true;
+      return;
     }
+    _updatingInfo = true;
+    try {
+      do {
+        _infoUpdatePending = false;
+        // 使用局部变量统计，统计完成后一次性赋值，避免中途被 UI 读到半途值
+        var totalMusic = 0;
+        var cachedMusic = 0;
+        if (yakushiinRuntimeEnvironment.dataEngineForV2PlayList.length > 0) {
+          try {
+            for (
+              var i = 0;
+              i < yakushiinRuntimeEnvironment.dataEngineForV2PlayList.length;
+              i++
+            ) {
+              var thisList = yakushiinRuntimeEnvironment
+                  .dataEngineForV2PlayList
+                  .getAt(i);
+              if (thisList == null) continue;
+              for (var music in thisList.musicList ?? const []) {
+                totalMusic++;
+                File thisMusicFile = File(
+                  "${yakushiinRuntimeEnvironment.musicDir.path}${Platform.pathSeparator}${music.videoMd5}",
+                );
+                if (await thisMusicFile.exists()) {
+                  cachedMusic++;
+                }
+              }
+            }
+            setState(() {
+              localMusicCount = totalMusic;
+              localMusicCacheCount = cachedMusic;
+              // 歌单落库后即为网关最新清单，网关数量直接取自数据库
+              gatewayMusicTotal = "$totalMusic";
+            });
+          } catch (e) {
+            yakushiinLogger.e("updateInfo 拉取数据库歌单信息失败！异常信息：$e");
+          }
+        } else {
+          setState(() {
+            localMusicCount = 0;
+            localMusicCacheCount = 0;
+            gatewayMusicTotal = "0";
+          });
+        }
 
-    double localCacheSizeDouble =
-        await getTotalSizeOfFilesInDir(yakushiinRuntimeEnvironment.musicDir) /
-        1024 /
-        1024;
-    setState(() {
-      localCacheSize = "$localCacheSizeDouble";
-    });
+        double localCacheSizeDouble =
+            await getTotalSizeOfFilesInDir(yakushiinRuntimeEnvironment.musicDir) /
+            1024 /
+            1024;
+        setState(() {
+          localCacheSize = "$localCacheSizeDouble";
+        });
+      } while (_infoUpdatePending);
+    } finally {
+      _updatingInfo = false;
+    }
   }
 
   /// 下载器状态变化回调：驱动 UI 刷新 & 文件完成计数刷新缓存统计
@@ -268,10 +286,19 @@ class _SyncPlayListPageState extends State<SyncPlayListPage> {
                   ),
                   if (state.totalCount > 0)
                     Text(
-                      "后台下载进度：${state.doneCount}/${state.totalCount} 个文件",
+                      "后台下载进度（音乐+字幕）：${state.doneCount}/${state.totalCount} 个文件",
                       style: TextStyle(
                         fontFamily: "simkai",
                         color: Colors.green[300],
+                        overflow: TextOverflow.clip,
+                      ),
+                    ),
+                  if (state.skippedCount > 0)
+                    Text(
+                      "已跳过网关已删除文件：${state.skippedCount} 个（本地游离文件将在收尾时清理）",
+                      style: TextStyle(
+                        fontFamily: "simkai",
+                        color: Colors.orange[300],
                         overflow: TextOverflow.clip,
                       ),
                     ),
