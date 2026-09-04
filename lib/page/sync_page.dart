@@ -8,14 +8,12 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:bot_toast/bot_toast.dart';
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_msg.dart';
-import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_playlist.dart';
 import 'package:yakushiin_player/model/runtime.dart';
-import 'package:yakushiin_player/model/version.dart';
+import 'package:yakushiin_player/model/yakushiin_background_downloader.dart';
 import 'package:yakushiin_player/model/yakushiin_logger.dart';
 import 'package:yakushiin_player/subfunction/get_total_size_of_files_in_dir.dart';
 import 'package:yakushiin_player/theme/font.dart';
@@ -34,10 +32,15 @@ class SyncPlayListPage extends StatefulWidget {
 class _SyncPlayListPageState extends State<SyncPlayListPage> {
   int localMusicCount = 0;
   int localMusicCacheCount = 0;
-  String nowHandlingName = "N/a";
   String gatewayMusicTotal = "未获取";
   String localCacheSize = "N/a";
-  double? downloadProgress;
+
+  // 全局后台下载器：离开本页面后下载依旧继续
+  final YakushiinBackgroundDownloader yakushiinBackgroundDownloader =
+      YakushiinBackgroundDownloader.instance;
+  int lastDoneCount = 0;
+  bool lastRunning = false;
+  bool resultDialogShown = false;
 
   Future<void> updateInfo() async {
     if (yakushiinRuntimeEnvironment.dataEngineForV2PlayList.length > 0) {
@@ -88,60 +91,47 @@ class _SyncPlayListPageState extends State<SyncPlayListPage> {
     });
   }
 
-  Future<NoaPlayerV2Msg> downloadMusicInUI(String url, String md5) async {
-    yakushiinLogger.i("下载文件:$url<=>>$md5 开始");
-    var result = NoaPlayerV2Msg();
-    final yakushiinRequestClient = Dio();
-    try {
-      if (!await yakushiinRuntimeEnvironment.cacheDir.exists()) {
-        await yakushiinRuntimeEnvironment.cacheDir.create();
-      }
-      File downloadCacheFile = File(
-        "${yakushiinRuntimeEnvironment.cacheDir.path}${Platform.pathSeparator}$md5",
-      );
-      yakushiinLogger.i("目标位置:${downloadCacheFile.path}");
-      if (await downloadCacheFile.exists()) {
-        yakushiinLogger.i("删除缓存文件夹内的未完成缓存文件:${downloadCacheFile.path}");
-        await downloadCacheFile.delete();
-      }
-      await yakushiinRequestClient.download(
-        url,
-        "${yakushiinRuntimeEnvironment.cacheDir.path}${Platform.pathSeparator}$md5",
-        queryParameters: yakushininPlayerUserAgentMap,
-        onReceiveProgress: (int received, int total) async {
-          setState(() {
-            downloadProgress = received / total;
-          });
-        },
-      );
-      setState(() {
-        downloadProgress = null;
-      });
-      if (!await yakushiinRuntimeEnvironment.musicDir.exists()) {
-        await yakushiinRuntimeEnvironment.musicDir.create();
-      }
-
-      await downloadCacheFile.copy(
-        "${yakushiinRuntimeEnvironment.musicDir.path}${Platform.pathSeparator}$md5",
-      );
-
-      await downloadCacheFile.delete();
-    } catch (e) {
-      result.isSuccess = false;
-      result.statusMessage = "下载失败：$e";
-      yakushiinLogger.e("下载文件:$url<=>>$md5 失败:$e");
-      return result;
+  /// 下载器状态变化回调：驱动 UI 刷新 & 文件完成计数刷新缓存统计
+  void _onDownloaderChanged() {
+    final state = yakushiinBackgroundDownloader.progressNotifier.value;
+    if (state.doneCount != lastDoneCount) {
+      lastDoneCount = state.doneCount;
+      updateInfo();
     }
-    result.isSuccess = true;
-    result.statusMessage = "下载完成";
-    yakushiinLogger.i("下载文件:$url<=>>$md5 完成");
-    return result;
+    // 新一轮同步开始，重置弹窗标记
+    if (state.running && !lastRunning) {
+      resultDialogShown = false;
+    }
+    // 流程结束（成功/失败）且页面仍在展示时，弹结果对话框（只弹一次）
+    if (!state.running && !resultDialogShown && state.message.isNotEmpty) {
+      resultDialogShown = true;
+      if (state.success) {
+        commonSuccessDialog(
+          context,
+          "✅全部同步完成",
+          "本地歌单已经成功和网关同步啦~",
+          "好~",
+        );
+      } else {
+        commonErrorDialog(
+          context,
+          "⛔同步失败",
+          state.message,
+          "啊这",
+        );
+      }
+    }
+    lastRunning = state.running;
+    setState(() {});
   }
 
   @override
   void initState() {
     super.initState();
     WakelockPlus.enable();
+    yakushiinBackgroundDownloader.progressNotifier.addListener(
+      _onDownloaderChanged,
+    );
 
     Timer(Duration(milliseconds: 500), () async {
       await updateInfo();
@@ -150,6 +140,9 @@ class _SyncPlayListPageState extends State<SyncPlayListPage> {
 
   @override
   void dispose() {
+    yakushiinBackgroundDownloader.progressNotifier.removeListener(
+      _onDownloaderChanged,
+    );
     WakelockPlus.disable();
     super.dispose();
   }
@@ -259,43 +252,47 @@ class _SyncPlayListPageState extends State<SyncPlayListPage> {
               ),
             ],
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                "当前正在处理歌曲：$nowHandlingName",
-                style: TextStyle(
-                  fontFamily: "simkai",
-                  color: Colors.green[300],
-                  overflow: TextOverflow.clip,
-                ),
-              ),
-            ],
-          ),
-          if (downloadProgress != null)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  "当前歌曲下载进度👇",
-                  style: TextStyle(
-                    fontFamily: "simkai",
-                    color: Colors.green[300],
-                    overflow: TextOverflow.clip,
+          ValueListenableBuilder<YakushiinDownloadState>(
+            valueListenable: yakushiinBackgroundDownloader.progressNotifier,
+            builder: (context, state, _) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "当前正在处理歌曲：${state.nowHandlingName}",
+                    style: TextStyle(
+                      fontFamily: "simkai",
+                      color: Colors.green[300],
+                      overflow: TextOverflow.clip,
+                    ),
                   ),
-                ),
-              ],
-            ),
-          if (downloadProgress != null)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                LinearProgressIndicator(
-                  value: downloadProgress,
-                  backgroundColor: Colors.pinkAccent,
-                ),
-              ],
-            ),
+                  if (state.totalCount > 0)
+                    Text(
+                      "后台下载进度：${state.doneCount}/${state.totalCount} 个文件",
+                      style: TextStyle(
+                        fontFamily: "simkai",
+                        color: Colors.green[300],
+                        overflow: TextOverflow.clip,
+                      ),
+                    ),
+                  if (state.downloadProgress != null)
+                    Text(
+                      "当前歌曲下载进度👇",
+                      style: TextStyle(
+                        fontFamily: "simkai",
+                        color: Colors.green[300],
+                        overflow: TextOverflow.clip,
+                      ),
+                    ),
+                  if (state.downloadProgress != null)
+                    LinearProgressIndicator(
+                      value: state.downloadProgress,
+                      backgroundColor: Colors.pinkAccent,
+                    ),
+                ],
+              );
+            },
+          ),
           if (localMusicCount != 0 &&
               (localMusicCacheCount / localMusicCount != 1))
             Column(
@@ -332,219 +329,25 @@ class _SyncPlayListPageState extends State<SyncPlayListPage> {
                     child: Text("拉取歌单并同步到本地", style: styleFontSimkai),
                   ),
                   onPressed: () async {
-                    var v2Msg =
-                        await NoaPlayerV2Msg().getNoaHandlerVideoListV2();
-                    if (v2Msg.isSuccess) {
-                      var gatewayMusicTotalInt = 0;
-                      for (var playList in v2Msg.playList!) {
-                        for (var i = 0; i < playList.musicList!.length; i++) {
-                          gatewayMusicTotalInt++;
-                        }
-                      }
-                      setState(() {
-                        gatewayMusicTotal = "$gatewayMusicTotalInt";
-                      });
+                    // 后台下载：交由全局下载器执行，离开页面 / 退到后台均可继续下载
+                    if (yakushiinBackgroundDownloader.isRunning) {
                       BotToast.showSimpleNotification(
                         duration: const Duration(seconds: 2),
                         hideCloseButton: false,
-                        backgroundColor: Colors.green[300],
-                        title: "✅从网关拉取歌单信息成功！即将开始下载，请不要退出此页面！",
+                        backgroundColor: Colors.yellow,
+                        title: "⚠已有同步任务正在进行中，请等待完成！",
                         titleStyle: styleFontSimkai,
                       );
-                      // 修复：原子化写入，避免 clear+逐条add 长窗口及中途退出导致丢失
-                      // 使用 putAll 以 playListName 为 key，与播放页保持一致（去重且无clear长窗口）
-                      try {
-                        final box =
-                            yakushiinRuntimeEnvironment.dataEngineForV2PlayList;
-                        final putMap = <String, NoaPlayerV2PlayList>{
-                          for (var p in v2Msg.playList!)
-                            if (p.playListName != null &&
-                                p.playListName!.isNotEmpty)
-                              p.playListName!: p
-                        };
-                        // 清理旧 int key 数据，避免新旧混存导致计数异常
-                        await box.clear();
-                        await box.putAll(putMap);
-                        yakushiinLogger.i("同步写入歌单 ${putMap.length} 个，当前总数 ${box.length}");
-                      } catch (e) {
-                        yakushiinLogger.e("同步写入歌单失败：$e");
-                        BotToast.showSimpleNotification(
-                          duration: const Duration(seconds: 2),
-                          hideCloseButton: false,
-                          backgroundColor: Colors.pink[200],
-                          title: "⛔同步写入歌单失败：$e",
-                          titleStyle: styleFontSimkai,
-                        );
-                        return;
-                      }
-                      for (var i = 0; i < v2Msg.playList!.length; i++) {
-                        for (var music in v2Msg.playList![i].musicList!) {
-                          try {
-                            setState(() {
-                              nowHandlingName = "【音乐】：=> ${music.videoName}";
-                            });
-                            var thisMusicVideoFile = File(
-                              "${yakushiinRuntimeEnvironment.musicDir.path}${Platform.pathSeparator}${music.videoMd5}",
-                            );
-                            if (!await thisMusicVideoFile.exists()) {
-                              // 不存在，下载，存在，不操作
-                              var downloadResult = await downloadMusicInUI(
-                                "${music.videoUrl}",
-                                "${music.videoMd5}",
-                              );
-                              if (!downloadResult.isSuccess) {
-                                yakushiinLogger.e(
-                                  "⛔同步歌单：下载失败（歌曲）:${downloadResult.statusMessage}",
-                                );
-                                BotToast.showSimpleNotification(
-                                  duration: const Duration(seconds: 2),
-                                  hideCloseButton: false,
-                                  backgroundColor: Colors.pink[200],
-                                  title:
-                                      "⛔同步歌单：下载失败（歌曲）:${downloadResult.statusMessage}",
-                                  titleStyle: styleFontSimkai,
-                                );
-                                setState(() {
-                                  nowHandlingName =
-                                      "⛔同步歌单：下载失败（歌曲）:${downloadResult.statusMessage}";
-                                });
-                                return;
-                              }
-                              await updateInfo();
-                            }
-
-                            if (music.subTitleMd5 != null &&
-                                music.subTitleMd5!.isNotEmpty) {
-                              setState(() {
-                                nowHandlingName =
-                                    "【字幕】：=> ${music.videoName}-${music.subTitleName}";
-                              });
-                              var thisMusicSubTitleFile = File(
-                                "${yakushiinRuntimeEnvironment.musicDir.path}${Platform.pathSeparator}${music.subTitleMd5}",
-                              );
-                              if (!await thisMusicSubTitleFile.exists()) {
-                                // 不存在，下载，存在，不操作
-                                var downloadResult = await downloadMusicInUI(
-                                  "${music.subTitleUrl}",
-                                  "${music.subTitleMd5}",
-                                );
-                                if (!downloadResult.isSuccess) {
-                                  yakushiinLogger.e(
-                                    "⛔同步歌单：下载失败（字幕）:${downloadResult.statusMessage}",
-                                  );
-                                  BotToast.showSimpleNotification(
-                                    duration: const Duration(seconds: 2),
-                                    hideCloseButton: false,
-                                    backgroundColor: Colors.pink[200],
-                                    title:
-                                        "⛔同步歌单：下载失败（字幕）:${downloadResult.statusMessage}",
-                                    titleStyle: styleFontSimkai,
-                                  );
-                                  setState(() {
-                                    nowHandlingName =
-                                        "⛔同步歌单：下载失败（字幕）:${downloadResult.statusMessage}";
-                                  });
-                                  return;
-                                }
-                                await updateInfo();
-                              }
-                            }
-                          } catch (e) {
-                            yakushiinLogger.e("⛔同步歌单：下载失败:$e");
-                            BotToast.showSimpleNotification(
-                              duration: const Duration(seconds: 2),
-                              hideCloseButton: false,
-                              backgroundColor: Colors.pink[200],
-                              title: "⛔同步歌单：下载失败:$e",
-                              titleStyle: styleFontSimkai,
-                            );
-                            break;
-                          }
-                        }
-                      }
-                      // 清空缓存文件夹
-                      if (await yakushiinRuntimeEnvironment.cacheDir.exists()) {
-                        await yakushiinRuntimeEnvironment.cacheDir.delete(
-                          recursive: true,
-                        );
-                      }
-                      if (!await yakushiinRuntimeEnvironment.cacheDir.exists()) {
-                        await yakushiinRuntimeEnvironment.cacheDir.create();
-                      }
-                      // 清空没有 md5 索引的文件
-                      var matchMusicMd5Count = 0;
-                      var matchSubTitleMd5Count = 0;
-                      var matchDeleteCount = 0;
-                      var files =
-                          yakushiinRuntimeEnvironment.musicDir.listSync();
-                      for (var file in files) {
-                        if (file is File && await file.exists()) {
-                          var md5Matched = false;
-                          for (var playList in v2Msg.playList!) {
-                            for (
-                              var i = 0;
-                              i < playList.musicList!.length;
-                              i++
-                            ) {
-                              if (file.path ==
-                                  "${yakushiinRuntimeEnvironment.musicDir.path}${Platform.pathSeparator}${playList.musicList![i].videoMd5!}") {
-                                // yakushiinLogger.d("检查索引=>音乐文件匹配：${file.path}");
-                                matchMusicMd5Count++;
-                                md5Matched = true;
-                                break;
-                              }
-                              if (file.path ==
-                                  "${yakushiinRuntimeEnvironment.musicDir.path}${Platform.pathSeparator}${playList.musicList![i].subTitleMd5!}") {
-                                // yakushiinLogger.d("检查索引=>字幕文件匹配：${file.path}");
-                                matchSubTitleMd5Count++;
-                                md5Matched = true;
-                                break;
-                              }
-                            }
-                          }
-                          if (!md5Matched) {
-                            yakushiinLogger.w("删除游离索引文件:${file.path}");
-                            matchDeleteCount++;
-                            await file.delete();
-                          }
-                        }
-                      }
-                      yakushiinLogger.i("音乐匹配计数:$matchMusicMd5Count");
-                      yakushiinLogger.i("字幕匹配计数:$matchSubTitleMd5Count");
-                      yakushiinLogger.i("游离删除计数:$matchDeleteCount");
-                      updateInfo();
-                      setState(() {
-                        nowHandlingName = "全部处理完成!";
-                      });
-                      BotToast.showSimpleNotification(
-                        duration: const Duration(seconds: 2),
-                        hideCloseButton: false,
-                        backgroundColor: Colors.green[300],
-                        title: "✅全部同步完成！",
-                        titleStyle: styleFontSimkai,
-                      );
-                      commonSuccessDialog(
-                        context,
-                        "✅全部同步完成",
-                        "本地歌单已经成功和网关同步啦~",
-                        "好~",
-                      );
-                    } else {
-                      BotToast.showSimpleNotification(
-                        duration: const Duration(seconds: 2),
-                        hideCloseButton: false,
-                        backgroundColor: Colors.pink[200],
-                        title:
-                            "⛔从网关拉取歌单信息失败！服务器返回：${v2Msg.statusCode} | ${v2Msg.statusMessage}",
-                        titleStyle: styleFontSimkai,
-                      );
-                      commonErrorDialog(
-                        context,
-                        "⛔从网关拉取歌单信息失败！",
-                        "服务器返回：${v2Msg.statusCode} | ${v2Msg.statusMessage}",
-                        "啊这",
-                      );
+                      return;
                     }
+                    BotToast.showSimpleNotification(
+                      duration: const Duration(seconds: 3),
+                      hideCloseButton: false,
+                      backgroundColor: Colors.green[300],
+                      title: "✅开始同步！支持后台下载，可离开此页面边听歌边下载~",
+                      titleStyle: styleFontSimkai,
+                    );
+                    await yakushiinBackgroundDownloader.startSync();
                   },
                 ),
               ),

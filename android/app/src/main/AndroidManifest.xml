@@ -76,6 +76,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <!-- ALSO ADD THIS PERMISSION IF TARGETING SDK 34 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <!-- 后台下载（dataSync 前台服务，TARGETING SDK 34+ 需要） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /> <!-- 可选 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>
