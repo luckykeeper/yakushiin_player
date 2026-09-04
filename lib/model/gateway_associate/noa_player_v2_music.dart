@@ -19,6 +19,9 @@ class NoaPlayerV2Music extends HiveObject {
   String? subTitleMd5;
   bool nowPlaying = false;
 
+  /// 相对音量增益，以 100 为基准（100 = 不增不减），来自 NoaHandler 配置
+  double volumeRatio = 100;
+
   NoaPlayerV2Music({
     this.id,
     this.playListID,
@@ -30,6 +33,7 @@ class NoaPlayerV2Music extends HiveObject {
     this.subTitleUrl,
     this.subTitleLang,
     this.subTitleMd5,
+    this.volumeRatio = 100,
   });
 
   NoaPlayerV2Music.fromJson(Map<String, dynamic> json) {
@@ -43,6 +47,12 @@ class NoaPlayerV2Music extends HiveObject {
     subTitleUrl = json['subTitleUrl'];
     subTitleLang = json['subTitleLang'];
     subTitleMd5 = json['subTitleMd5'];
+    // 兼容老网关 / 老数据：未下发或为 0 时按 100 处理
+    volumeRatio =
+        (json['volumeRatio'] as num?)?.toDouble() ?? 100;
+    if (volumeRatio == 0) {
+      volumeRatio = 100;
+    }
   }
 
   Map<String, dynamic> toJson() {
@@ -57,6 +67,7 @@ class NoaPlayerV2Music extends HiveObject {
     data['subTitleUrl'] = subTitleUrl;
     data['subTitleLang'] = subTitleLang;
     data['subTitleMd5'] = subTitleMd5;
+    data['volumeRatio'] = volumeRatio;
     return data;
   }
 }

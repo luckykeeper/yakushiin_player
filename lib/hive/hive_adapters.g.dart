@@ -113,13 +113,14 @@ class NoaPlayerV2MusicAdapter extends TypeAdapter<NoaPlayerV2Music> {
       subTitleUrl: fields[7] as String?,
       subTitleLang: fields[8] as String?,
       subTitleMd5: fields[9] as String?,
+      volumeRatio: fields[11] == null ? 100 : (fields[11] as num).toDouble(),
     )..nowPlaying = fields[10] as bool;
   }
 
   @override
   void write(BinaryWriter writer, NoaPlayerV2Music obj) {
     writer
-      ..writeByte(11)
+      ..writeByte(12)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -141,7 +142,9 @@ class NoaPlayerV2MusicAdapter extends TypeAdapter<NoaPlayerV2Music> {
       ..writeByte(9)
       ..write(obj.subTitleMd5)
       ..writeByte(10)
-      ..write(obj.nowPlaying);
+      ..write(obj.nowPlaying)
+      ..writeByte(11)
+      ..write(obj.volumeRatio);
   }
 
   @override

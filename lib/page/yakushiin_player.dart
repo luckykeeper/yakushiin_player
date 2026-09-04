@@ -522,6 +522,16 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
         nowPlayingIndex = playList.index;
         ref.read(nowPlayingIndexProvider.notifier).state = playList.index;
 
+        // 应用相对音量：把当前歌曲的 volumeRatio 配置到软件音量
+        // volumeRatio 以 100 为基准（100 = 不增不减），兼容旧数据按 100 处理
+        final double volumeRatio =
+            ref.read(currentPlayList).musicList![playList.index].volumeRatio;
+        final double appliedVolume = volumeRatio <= 0 ? 100 : volumeRatio;
+        await yakushiinPlayer.setVolume(appliedVolume);
+        yakushiinLogger.i(
+          "应用相对音量:$appliedVolume ($nowPlayingMusicName)",
+        );
+
         // 更新播放状态到数据库
         for (var i = 0; i < ref.read(currentPlayList).musicList!.length; i++) {
           ref.read(currentPlayList).musicList![i].nowPlaying = false;
@@ -1623,20 +1633,10 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                 ],
               ),
               const Divider(),
+              // 软件音量现在由歌曲的 volumeRatio（相对音量）控制，不再提供手动调整按钮
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  ElevatedButton.icon(
-                    onPressed: () async {
-                      currentVolumePlayer - 5 < 0
-                          ? await yakushiinPlayer.setVolume(0)
-                          : await yakushiinPlayer.setVolume(
-                            currentVolumePlayer - 5,
-                          );
-                    },
-                    label: Text("音量（软） -", style: styleFontSimkai),
-                    icon: Icon(Icons.volume_down_rounded),
-                  ),
                   ElevatedButton.icon(
                     onPressed:
                         denyPopFlag
@@ -1646,17 +1646,6 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                             },
                     label: Text("从头播放", style: styleFontSimkai),
                     icon: Icon(Icons.fast_rewind_rounded),
-                  ),
-                  ElevatedButton.icon(
-                    onPressed: () async {
-                      currentVolumePlayer + 5 > 100
-                          ? await yakushiinPlayer.setVolume(100)
-                          : await yakushiinPlayer.setVolume(
-                            currentVolumePlayer + 5,
-                          );
-                    },
-                    label: Text("音量（软） +", style: styleFontSimkai),
-                    icon: Icon(Icons.volume_up_rounded),
                   ),
                 ],
               ),

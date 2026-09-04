@@ -29,7 +29,7 @@ types:
         index: 2
   NoaPlayerV2Music:
     typeId: 2
-    nextIndex: 11
+    nextIndex: 12
     fields:
       id:
         index: 0
@@ -53,3 +53,5 @@ types:
         index: 9
       nowPlaying:
         index: 10
+      volumeRatio:
+        index: 11
