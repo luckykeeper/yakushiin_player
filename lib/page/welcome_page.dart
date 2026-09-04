@@ -18,6 +18,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_msg.dart';
 import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_playlist.dart';
 import 'package:yakushiin_player/model/runtime.dart';
+import 'package:yakushiin_player/model/yakushiin_logger.dart';
 import 'package:yakushiin_player/model/version.dart';
 import 'package:yakushiin_player/subfunction/launch_url.dart';
 import 'package:yakushiin_player/theme/font.dart';
@@ -326,6 +327,23 @@ class _WelcomePageState extends ConsumerState<WelcomePage>
                                         playListBtnListWidget.add(
                                           ElevatedButton.icon(
                                             onPressed: () async {
+                                              // 检测本地数据是否被在线会话回写污染（videoMd5 应为 md5 而非 URL）
+                                              var urlPollutedCount = 0;
+                                              for (var m
+                                                  in thisList.musicList ?? []) {
+                                                final v = m.videoMd5 ?? "";
+                                                if (v.startsWith("http://") ||
+                                                    v.startsWith(
+                                                      "https://",
+                                                    )) {
+                                                  urlPollutedCount++;
+                                                }
+                                              }
+                                              if (urlPollutedCount > 0) {
+                                                yakushiinLogger.w(
+                                                  "本地歌单 ${thisList.playListName} 有 $urlPollutedCount 条数据是 URL（被在线会话回写污染），这些歌曲将走在线播放；重新同步一次即可恢复本地数据",
+                                                );
+                                              }
                                               ref.read(currentPlayList).id =
                                                   thisList.id;
                                               ref

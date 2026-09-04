@@ -22,13 +22,14 @@ class GatewaySettingAdapter extends TypeAdapter<GatewaySetting> {
       gatewayToken: fields[2] as String,
       weatherApiToken: fields[3] as String,
       tvMode: fields[4] == null ? false : fields[4] as bool,
+      anime4kMode: fields[5] == null ? "off" : fields[5] as String,
     );
   }
 
   @override
   void write(BinaryWriter writer, GatewaySetting obj) {
     writer
-      ..writeByte(5)
+      ..writeByte(6)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -38,7 +39,9 @@ class GatewaySettingAdapter extends TypeAdapter<GatewaySetting> {
       ..writeByte(3)
       ..write(obj.weatherApiToken)
       ..writeByte(4)
-      ..write(obj.tvMode);
+      ..write(obj.tvMode)
+      ..writeByte(5)
+      ..write(obj.anime4kMode);
   }
 
   @override

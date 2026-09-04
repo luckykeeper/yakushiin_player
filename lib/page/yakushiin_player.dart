@@ -132,6 +132,10 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
 
   Position? currentPosition;
 
+  // 该平台/系统设置下永远拿不到定位（如 PC 端位置服务未开启、权限被永久拒绝）时
+  // 置为 true 并停止定时重试；权限只是暂时未授予时保持 false，按原逻辑继续重试
+  bool locationUnavailableStopRetry = false;
+
   Future<Position> _determinePosition() async {
     bool serviceEnabled;
     LocationPermission permission;
@@ -185,6 +189,21 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
         setState(() {});
       }
     } catch (e) {
+      // 进入页面尝试后判断：平台本身无法获取定位时，取消定时器，不再定时尝试
+      if (_isLocationUnavailable(e)) {
+        locationUnavailableStopRetry = true;
+        getLocationAndWeatherTimer?.cancel();
+        getLocationAndWeatherTimer = null;
+        yakushiinLogger.w("当前平台无法获取定位（$e），已停止定时获取定位与天气");
+        BotToast.showSimpleNotification(
+          duration: const Duration(seconds: 2),
+          hideCloseButton: false,
+          backgroundColor: Colors.pink[200],
+          title: "⛔当前平台无法获取定位，已停止定时获取:$e",
+          titleStyle: styleFontSimkai,
+        );
+        return;
+      }
       yakushiinLogger.e("获取定位信息异常:$e");
       try {
         currentPosition = await Geolocator.getLastKnownPosition();
@@ -237,9 +256,217 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
     }
   }
 
+  // Anime4K 超分（bloc97/Anime4K v4.0.1 官方预设链）
+  // 链中文件名与 assets/shaders/ 一致，运行时解压到应用支持目录后交给 mpv 加载
+  static const List<String> _anime4kShaderFiles = [
+    "Anime4K_Clamp_Highlights.glsl",
+    "Anime4K_Restore_CNN_S.glsl",
+    "Anime4K_Restore_CNN_M.glsl",
+    "Anime4K_Restore_CNN_VL.glsl",
+    "Anime4K_Restore_CNN_Soft_S.glsl",
+    "Anime4K_Restore_CNN_Soft_M.glsl",
+    "Anime4K_Restore_CNN_Soft_VL.glsl",
+    "Anime4K_Upscale_CNN_x2_S.glsl",
+    "Anime4K_Upscale_CNN_x2_M.glsl",
+    "Anime4K_Upscale_CNN_x2_VL.glsl",
+    "Anime4K_Upscale_Denoise_CNN_x2_M.glsl",
+    "Anime4K_Upscale_Denoise_CNN_x2_VL.glsl",
+    "Anime4K_AutoDownscalePre_x2.glsl",
+    "Anime4K_AutoDownscalePre_x4.glsl",
+  ];
+  static const Map<String, List<String>> _anime4kPresets = {
+    // 模式A：Restore -> Upscale -> Upscale，适合 1080p 动画
+    "A_HQ": [
+      "Anime4K_Clamp_Highlights.glsl",
+      "Anime4K_Restore_CNN_VL.glsl",
+      "Anime4K_Upscale_CNN_x2_VL.glsl",
+      "Anime4K_AutoDownscalePre_x2.glsl",
+      "Anime4K_AutoDownscalePre_x4.glsl",
+      "Anime4K_Upscale_CNN_x2_M.glsl",
+    ],
+    // 模式B：Restore_Soft -> Upscale -> Upscale，适合 720p 动画
+    "B_HQ": [
+      "Anime4K_Clamp_Highlights.glsl",
+      "Anime4K_Restore_CNN_Soft_VL.glsl",
+      "Anime4K_Upscale_CNN_x2_VL.glsl",
+      "Anime4K_AutoDownscalePre_x2.glsl",
+      "Anime4K_AutoDownscalePre_x4.glsl",
+      "Anime4K_Upscale_CNN_x2_M.glsl",
+    ],
+    // 模式C：Upscale_Denoise -> Upscale，适合无劣化片源
+    "C_HQ": [
+      "Anime4K_Clamp_Highlights.glsl",
+      "Anime4K_Upscale_Denoise_CNN_x2_VL.glsl",
+      "Anime4K_AutoDownscalePre_x2.glsl",
+      "Anime4K_AutoDownscalePre_x4.glsl",
+      "Anime4K_Upscale_CNN_x2_M.glsl",
+    ],
+    // 低配 GPU 档位（Fast）
+    "A_Fast": [
+      "Anime4K_Clamp_Highlights.glsl",
+      "Anime4K_Restore_CNN_M.glsl",
+      "Anime4K_Upscale_CNN_x2_M.glsl",
+      "Anime4K_AutoDownscalePre_x2.glsl",
+      "Anime4K_AutoDownscalePre_x4.glsl",
+      "Anime4K_Upscale_CNN_x2_S.glsl",
+    ],
+    "B_Fast": [
+      "Anime4K_Clamp_Highlights.glsl",
+      "Anime4K_Restore_CNN_Soft_M.glsl",
+      "Anime4K_Upscale_CNN_x2_M.glsl",
+      "Anime4K_AutoDownscalePre_x2.glsl",
+      "Anime4K_AutoDownscalePre_x4.glsl",
+      "Anime4K_Upscale_CNN_x2_S.glsl",
+    ],
+    "C_Fast": [
+      "Anime4K_Clamp_Highlights.glsl",
+      "Anime4K_Upscale_Denoise_CNN_x2_M.glsl",
+      "Anime4K_AutoDownscalePre_x2.glsl",
+      "Anime4K_AutoDownscalePre_x4.glsl",
+      "Anime4K_Upscale_CNN_x2_S.glsl",
+    ],
+  };
+
+  // 当前 Anime4K 设置档位：off / Fast / HQ（设置页只保存档位，A/B/C 模式按视频分辨率动态决定）
+  String _anime4kQuality = "off";
+  // 当前已应用的组合键（如 "A_HQ"），避免重复设置
+  String _anime4kAppliedKey = "";
+  // 显示在调试信息视频参数区域的当前状态
+  String anime4kStatus = "关闭";
+
+  // 按视频高度动态决定 A/B/C 模式：≥1000(1080p)→A，≥640(720p)→B，其余(480p 等)→C
+  String _anime4kModeByHeight(int height) {
+    if (height >= 1000) {
+      return "A";
+    }
+    if (height >= 640) {
+      return "B";
+    }
+    return "C";
+  }
+
+  // 把 assets 里的着色器解压到应用支持目录（幂等，已存在则跳过），返回目录路径（正斜杠）
+  Future<String?> _extractAnime4KShaders() async {
+    try {
+      final targetDir = Directory(
+        "${yakushiinRuntimeEnvironment.appSupportDirectory.path}${Platform.pathSeparator}shaders",
+      );
+      if (!await targetDir.exists()) {
+        await targetDir.create(recursive: true);
+      }
+      for (final name in _anime4kShaderFiles) {
+        final data = await rootBundle.load("assets/shaders/$name");
+        final target = File("${targetDir.path}${Platform.pathSeparator}$name");
+        if (!await target.exists()) {
+          await target.writeAsBytes(data.buffer.asUint8List(), flush: true);
+        }
+      }
+      return targetDir.path.replaceAll("\\", "/");
+    } catch (e) {
+      yakushiinLogger.e("提取 Anime4K 着色器失败:$e");
+      return null;
+    }
+  }
+
+  // 根据当前设置档位与视频分辨率，应用/切换/清除 Anime4K 着色器
+  Future<void> _updateAnime4kShaders() async {
+    try {
+      if (_anime4kQuality == "off") {
+        if (_anime4kAppliedKey.isNotEmpty) {
+          await (yakushiinPlayer.platform as NativePlayer).setProperty(
+            "glsl-shaders",
+            "",
+          );
+          _anime4kAppliedKey = "";
+          yakushiinLogger.i("Anime4K 已关闭");
+        }
+        if (mounted) {
+          setState(() => anime4kStatus = "关闭");
+        }
+        return;
+      }
+      final height = yakushiinPlayer.state.height ?? 0;
+      if (height <= 0) {
+        // 尚未获取到视频分辨率，等待 height 流再触发
+        return;
+      }
+      final key = "${_anime4kModeByHeight(height)}_$_anime4kQuality";
+      if (key == _anime4kAppliedKey) {
+        return;
+      }
+      final chain = _anime4kPresets[key];
+      if (chain == null) {
+        return;
+      }
+      final dir = await _extractAnime4KShaders();
+      if (dir == null) {
+        return;
+      }
+      final shaders = chain.map((s) => "$dir/$s").join(";");
+      await (yakushiinPlayer.platform as NativePlayer).setProperty(
+        "glsl-shaders",
+        shaders,
+      );
+      _anime4kAppliedKey = key;
+      final statusText =
+          "模式${_anime4kModeByHeight(height)}（${height}p，${_anime4kQuality == "HQ" ? "高质量" : "快速"}）";
+      if (mounted) {
+        setState(() => anime4kStatus = statusText);
+      }
+      yakushiinLogger.i("Anime4K 已切换：$statusText（视频高度 $height）");
+    } catch (e) {
+      yakushiinLogger.e("应用 Anime4K 着色器失败:$e");
+    }
+  }
+
+  // 判断是否属于「该平台/系统设置下永远拿不到定位」的情况：
+  // 1、PC 端位置服务未开启（Windows 桌面端常见，重试也不会成功）
+  // 2、定位权限被系统永久拒绝（不再弹授权框，重试无意义）
+  // 权限只是暂时未授予（denied，可弹系统授权框）等可恢复情况不在此列，继续按原逻辑定时重试
+  bool _isLocationUnavailable(Object e) {
+    final msg = e.toString();
+    if (msg.contains("位置权限已经被永久禁止")) {
+      return true;
+    }
+    if (msg.contains("位置服务已被禁用") &&
+        yakushiinRuntimeEnvironment.isDesktopPlatform) {
+      return true;
+    }
+    // geolocator_windows 的 PlatformException：Windows 定位服务未运行/无法启动
+    if (msg.contains("RequestAccess failed") ||
+        msg.contains("Geolocation Service") ||
+        msg.contains("无法启动服务")) {
+      return true;
+    }
+    return false;
+  }
+
+  // 运行日志按级别染色：DEBUG/TRACE 灰色，WARNING 黄色，ERROR/FATAL/WTF 红色，INFO 白色
+  Color yakushiinLogLineColor(String line, BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    if (line.contains("[DEBUG]") || line.contains("[TRACE]")) {
+      return dark ? const Color(0xFF9E9E9E) : const Color(0xFF616161);
+    }
+    if (line.contains("[WARNING]") || line.contains("[WARN]")) {
+      return dark ? const Color(0xFFFFEB3B) : const Color(0xFF8A6D00);
+    }
+    if (line.contains("[ERROR]") ||
+        line.contains("[FATAL]") ||
+        line.contains("[WTF]")) {
+      return dark ? const Color(0xFFFF5252) : const Color(0xFFC62828);
+    }
+    // INFO 及其他
+    return dark ? Colors.white : Colors.black87;
+  }
+
   late Player yakushiinPlayer = Player(
     configuration: PlayerConfiguration(
       title: 'YakushiinPlayer',
+      // mpv 日志级别（error/warn/info/v/debug/trace），接入运行日志展示
+      logLevel: MPVLogLevel.info,
+      // 解复用缓冲（demuxer-max-bytes / demuxer-max-back-bytes）
+      // 默认 32MB，4K60 高码率（约 40Mbps）下仅约 6 秒，提高到 128MB 保证在线播放流畅
+      bufferSize: 128 * 1024 * 1024,
       ready: () {
         yakushiinLogger.i('yakushiinPlayer 初始化完成');
       },
@@ -273,6 +500,30 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
       if (Platform.isAndroid) {
         await _loadAndroidAudioStream();
       }
+      // mpv 磁盘缓存指向应用缓存目录，避免每个视频报 "Failed to create file cache"
+      try {
+        final mpvCacheFile =
+            "${yakushiinRuntimeEnvironment.appCacheDirectory.path}${Platform.pathSeparator}mpv-cache.dump";
+        await (yakushiinPlayer.platform as NativePlayer).setProperty(
+          "cache-file",
+          mpvCacheFile,
+        );
+      } catch (e) {
+        yakushiinLogger.w("设置 mpv 磁盘缓存文件失败:$e");
+      }
+      // 读取 Anime4K 设置档位（兼容旧版 A_HQ/B_HQ 等取值），按视频分辨率动态应用
+      final rawAnime4kMode =
+          yakushiinRuntimeEnvironment.dataEngineForGatewaySetting
+              .getAt(0)
+              ?.anime4kMode ??
+          "off";
+      _anime4kQuality =
+          rawAnime4kMode == "off"
+              ? "off"
+              : rawAnime4kMode.endsWith("Fast")
+              ? "Fast"
+              : "HQ";
+      await _updateAnime4kShaders();
     });
 
     // 电视模式配置
@@ -329,6 +580,33 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
     ) async {
       yakushiinLogger.i("定时器:获取一次定位与天气");
       await getCurrentLocationAndWeather();
+    });
+
+    // 接入 mpv (media_kit) 日志到运行日志区域
+    yakushiinPlayer.stream.log.listen((PlayerLog log) {
+      final text = log.text.trim();
+      if (text.isEmpty) {
+        return;
+      }
+      // 单行展示，超长截断，避免刷爆日志缓冲
+      final singleLine = text.replaceAll("\n", " ").replaceAll("\r", " ");
+      final truncated =
+          singleLine.length > 300
+              ? "${singleLine.substring(0, 300)}..."
+              : singleLine;
+      final message = "[mpv:${log.level}][${log.prefix}] $truncated";
+      if (log.level == "error") {
+        yakushiinLogger.e(message);
+      } else if (log.level == "warn") {
+        yakushiinLogger.w(message);
+      } else {
+        yakushiinLogger.d(message);
+      }
+    });
+
+    // 视频分辨率变化时（切歌/切换清晰度）动态切换 Anime4K 模式
+    yakushiinPlayer.stream.height.listen((_) {
+      _updateAnime4kShaders();
     });
 
     // 2. 获取 AudioHandler
@@ -459,60 +737,35 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
               "${ref.watch(currentPlayList).musicList![0].videoName}";
         }
         // 加载字幕（如果有）
-        if (ref.watch(currentPlayList).musicList![playList.index].subTitleMd5 !=
-            null) {
-          if (ref
-              .watch(currentPlayList)
-              .musicList![playList.index]
-              .subTitleMd5!
-              .isNotEmpty) {
-            if (ref
-                    .watch(currentPlayList)
-                    .musicList!
-                    .first
-                    .subTitleMd5!
-                    .contains("http://") ||
-                ref
-                    .watch(currentPlayList)
-                    .musicList!
-                    .first
-                    .subTitleMd5!
-                    .contains("https://")) {
-              // 在线字幕
-              yakushiinLogger.i(
-                "设置字幕:${ref.watch(currentPlayList).musicList![playList.index].subTitleMd5!}",
-              );
-              await yakushiinPlayer.setSubtitleTrack(
-                SubtitleTrack.uri(
-                  ref
-                      .watch(currentPlayList)
-                      .musicList![playList.index]
-                      .subTitleMd5!,
-                  title:
-                      "${ref.watch(currentPlayList).musicList![playList.index].subTitleName}",
-                  language:
-                      "${ref.watch(currentPlayList).musicList![playList.index].subTitleLang}",
-                ),
-              );
-            } else {
-              // 本地字幕
-              yakushiinLogger.i(
-                "设置字幕:${yakushiinRuntimeEnvironment.musicDir.path}${Platform.pathSeparator}${ref.watch(currentPlayList).musicList![playList.index].subTitleMd5!}",
-              );
-              await yakushiinPlayer.setSubtitleTrack(
-                SubtitleTrack.uri(
-                  "${yakushiinRuntimeEnvironment.musicDir.path}${Platform.pathSeparator}${ref.watch(currentPlayList).musicList![playList.index].subTitleMd5!}",
-                  title:
-                      "${ref.watch(currentPlayList).musicList![playList.index].subTitleName}",
-                  language:
-                      "${ref.watch(currentPlayList).musicList![playList.index].subTitleLang}",
-                ),
-              );
-            }
+        // 注意：必须按「当前歌曲」判断在线/本地，不能用 musicList.first——
+        // 每首歌的字幕下载状态不同（URL=未下载在线播放，md5=已下载本地播放）
+        final currentMusic =
+            ref.watch(currentPlayList).musicList![playList.index];
+        final subTitleTarget = currentMusic.subTitleMd5 ?? "";
+        if (subTitleTarget.isNotEmpty) {
+          if (subTitleTarget.startsWith("http://") ||
+              subTitleTarget.startsWith("https://")) {
+            // 在线字幕（该歌曲字幕未下载，直接使用 URL）
+            yakushiinLogger.i("设置字幕(在线):$subTitleTarget");
+            await yakushiinPlayer.setSubtitleTrack(
+              SubtitleTrack.uri(
+                subTitleTarget,
+                title: "${currentMusic.subTitleName}",
+                language: "${currentMusic.subTitleLang}",
+              ),
+            );
           } else {
-            // 没有字幕的清掉所有字幕
-            // yakushiinLogger.d("没有字幕，清除掉当前字幕轨");
-            await yakushiinPlayer.setSubtitleTrack(SubtitleTrack.no());
+            // 本地字幕（该歌曲字幕已下载，md5 为文件名）
+            final localSubPath =
+                "${yakushiinRuntimeEnvironment.musicDir.path}${Platform.pathSeparator}$subTitleTarget";
+            yakushiinLogger.i("设置字幕(本地):$localSubPath");
+            await yakushiinPlayer.setSubtitleTrack(
+              SubtitleTrack.uri(
+                localSubPath,
+                title: "${currentMusic.subTitleName}",
+                language: "${currentMusic.subTitleLang}",
+              ),
+            );
           }
         } else {
           // 没有字幕的清掉所有字幕
@@ -540,6 +793,16 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
         }
         ref.read(currentPlayList).musicList![playList.index].nowPlaying = true;
 
+        // 仅本地（离线）会话回写数据库：
+        // 在线会话的内存歌单中 videoMd5/subTitleMd5 存的是 URL（welcome 页设置），
+        // 回写会把本地数据库的 md5 全部覆盖成 URL，导致下次「本地离线播放」误判为在线播放
+        final firstVideoMd5 =
+            ref.read(currentPlayList).musicList!.first.videoMd5 ?? "";
+        if (firstVideoMd5.startsWith("http://") ||
+            firstVideoMd5.startsWith("https://")) {
+          yakushiinLogger.d("在线播放会话，跳过回写数据库（避免 URL 污染本地数据）");
+          return;
+        }
         // 修复：原 clear+add 非原子且并发不安全，偶现 3->2 丢失
         // 现改为以 playListName 为 key 的原子 put，并加锁防止并发写
         if (_isPersistingPlayList) {
@@ -1092,7 +1355,11 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                   ],
                 ),
               ),
-              const Divider(),
+              // 天气与计步均无内容时（如 PC 端拿不到定位），隐藏这一行与多余的分隔线
+              if (!(yakushiinRuntimeEnvironment.isDesktopPlatform
+                      ? currentWeather == null
+                      : (pedometerStep == 0 && currentWeather == null)))
+                const Divider(),
               yakushiinRuntimeEnvironment.isDesktopPlatform
                   ? MaterialDesktopVideoControlsTheme(
                     normal: MaterialDesktopVideoControlsThemeData(
@@ -1637,22 +1904,7 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
               ),
               const Divider(),
               // 软件音量现在由歌曲的 volumeRatio（相对音量）控制，不再提供手动调整按钮
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  ElevatedButton.icon(
-                    onPressed:
-                        denyPopFlag
-                            ? null
-                            : () async {
-                              yakushiinPlayer.jump(0);
-                            },
-                    label: Text("从头播放", style: styleFontSimkai),
-                    icon: Icon(Icons.fast_rewind_rounded),
-                  ),
-                ],
-              ),
-              const Divider(),
+              // 从头播放按钮已移动到下方「当前歌单 / 防误触」一行中
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
@@ -1855,6 +2107,17 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                   ),
 
                   ElevatedButton.icon(
+                    onPressed:
+                        denyPopFlag
+                            ? null
+                            : () async {
+                              yakushiinPlayer.jump(0);
+                            },
+                    label: Text("从头播放", style: styleFontSimkai),
+                    icon: Icon(Icons.fast_rewind_rounded),
+                  ),
+
+                  ElevatedButton.icon(
                     onPressed: () async {
                       BotToast.showSimpleNotification(
                         duration: const Duration(seconds: 2),
@@ -1948,7 +2211,7 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                 child: Column(
                   children: [
                     Text(
-                      "当前视频参数: 硬解 ${nowPlayingVideoParams.hwPixelformat} | 软解 ${nowPlayingVideoParams.pixelformat} | 宽 ${nowPlayingVideoParams.w} | 高 ${nowPlayingVideoParams.h} | 方向 ${nowPlayingVideoParams.rotate} | 修正宽 ${nowPlayingVideoParams.dw} | 修正高 ${nowPlayingVideoParams.dh}",
+                      "当前视频参数: 硬解 ${nowPlayingVideoParams.hwPixelformat} | 软解 ${nowPlayingVideoParams.pixelformat} | 宽 ${nowPlayingVideoParams.w} | 高 ${nowPlayingVideoParams.h} | 方向 ${nowPlayingVideoParams.rotate} | 修正宽 ${nowPlayingVideoParams.dw} | 修正高 ${nowPlayingVideoParams.dh} | Anime4K: $anime4kStatus",
                       style: styleFontSimkaiBoldLarge,
                     ),
                   ],
@@ -2071,8 +2334,10 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                 ),
               ),
               // 日志显示区域：限制高度不撑爆页面，内部可滚动，防止日志刷屏卡顿
+              // 宽度始终占满应用宽度（不随文本内容伸缩）
               Container(
                 height: 220,
+                width: double.infinity,
                 margin: const EdgeInsets.fromLTRB(8, 4, 8, 8),
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
@@ -2085,16 +2350,40 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
                 child: ValueListenableBuilder<String>(
                   valueListenable: yakushiinLogBuffer.text,
                   builder: (context, logText, _) {
+                    final baseStyle = const TextStyle(
+                      fontSize: 11,
+                      height: 1.3,
+                      fontFamily: 'monospace',
+                    );
+                    // 按行拆分并按日志级别染色（Windows 换行为 \r\n，需去掉 \r）
+                    final lineSpans =
+                        logText.isEmpty
+                            ? <TextSpan>[
+                              TextSpan(
+                                text: "暂无日志",
+                                style: baseStyle.copyWith(
+                                  color: const Color(0xFF30FF30),
+                                ),
+                              ),
+                            ]
+                            : logText
+                                .split("\n")
+                                .map(
+                                  (line) => TextSpan(
+                                    text: "${line.replaceAll('\r', '')}\n",
+                                    style: baseStyle.copyWith(
+                                      color: yakushiinLogLineColor(
+                                        line,
+                                        context,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                                .toList();
                     return SingleChildScrollView(
                       controller: logAreaScrollController,
-                      child: SelectableText(
-                        logText.isEmpty ? "暂无日志" : logText,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          height: 1.3,
-                          fontFamily: 'monospace',
-                          color: Color(0xFF30FF30),
-                        ),
+                      child: SelectableText.rich(
+                        TextSpan(style: baseStyle, children: lineSpans),
                       ),
                     );
                   },

@@ -68,6 +68,7 @@ flutter:
     - assets/images/lockup_flutter_horizontal.png
     - assets/images/app_icon.png
     - assets/images/app_icon.ico
+    - assets/shaders/
 
   fonts:
     # - family: LXGWWenKai

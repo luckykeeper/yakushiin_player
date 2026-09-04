@@ -13,12 +13,16 @@ class GatewaySetting extends HiveObject {
   String weatherApiToken;
   bool tvMode;
 
+  /// Anime4K 超分模式：off / A_HQ / B_HQ / C_HQ / A_Fast / B_Fast / C_Fast
+  String anime4kMode;
+
   GatewaySetting({
     this.id = 0,
     required this.gatewayAddress,
     required this.gatewayToken,
     required this.weatherApiToken,
     this.tvMode = false,
+    this.anime4kMode = "off",
   });
 
   Map<String, dynamic> toJson() {

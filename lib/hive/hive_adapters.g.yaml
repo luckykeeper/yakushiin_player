@@ -5,7 +5,7 @@ nextTypeId: 3
 types:
   GatewaySetting:
     typeId: 0
-    nextIndex: 5
+    nextIndex: 6
     fields:
       id:
         index: 0
@@ -17,6 +17,8 @@ types:
         index: 3
       tvMode:
         index: 4
+      anime4kMode:
+        index: 5
   NoaPlayerV2PlayList:
     typeId: 1
     nextIndex: 3

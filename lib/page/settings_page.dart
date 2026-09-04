@@ -28,7 +28,23 @@ class _SettingsPageState extends State<SettingsPage> {
   TextEditingController gatewayTokenController = TextEditingController();
   TextEditingController weatherApiTokenController = TextEditingController();
   bool tvMode = false;
+  String anime4kMode = "off";
   final GlobalKey _formKey = GlobalKey<FormState>();
+
+  // Anime4K 设置档位：off / Fast / HQ（A/B/C 模式由播放器根据视频分辨率动态决定）
+  static const Map<String, String> _anime4kModeLabels = {
+    "off": "关闭",
+    "Fast": "快速（性能优先，适合较低端 GPU）",
+    "HQ": "高质量（画质优先，需要较强 GPU）",
+  };
+
+  /// 兼容旧版取值（A_HQ/B_HQ/C_HQ → HQ，*_Fast → Fast）
+  String _coerceAnime4kMode(String raw) {
+    if (raw == "off") {
+      return "off";
+    }
+    return raw.endsWith("Fast") ? "Fast" : "HQ";
+  }
 
   @override
   void initState() {
@@ -48,6 +64,12 @@ class _SettingsPageState extends State<SettingsPage> {
                   .getAt(0)
                   ?.tvMode ??
               false;
+          anime4kMode = _coerceAnime4kMode(
+            yakushiinRuntimeEnvironment.dataEngineForGatewaySetting
+                    .getAt(0)
+                    ?.anime4kMode ??
+                "off",
+          );
         });
       } catch (e) {
         yakushiinLogger.e("initState 拉取网关配置失败或尚未配置过网关信息！异常信息：$e");
@@ -168,6 +190,46 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                       ],
                     ),
+                    Row(
+                      children: [
+                        const Icon(Icons.auto_awesome),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text("Anime4K 超分模式", style: styleFontSimkai),
+                              Text(
+                                "对低分辨率动画上采样（Anime4K v4）。A/B/C 模式根据视频分辨率自动选择（≥1080p→A、720p→B、480p 及以下→C）。仅对动画风格视频有效，实拍等视频可能产生伪影。修改后重新进入播放页生效。",
+                                style: styleFontSimkai,
+                              ),
+                              DropdownButton<String>(
+                                value:
+                                    _anime4kModeLabels.containsKey(anime4kMode)
+                                    ? anime4kMode
+                                    : "off",
+                                isExpanded: true,
+                                items:
+                                    _anime4kModeLabels.entries
+                                        .map(
+                                          (e) => DropdownMenuItem(
+                                            value: e.key,
+                                            child: Text(
+                                              e.value,
+                                              style: styleFontSimkai,
+                                            ),
+                                          ),
+                                        )
+                                        .toList(),
+                                onChanged: (value) {
+                                  setState(() => anime4kMode = value ?? "off");
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                     Padding(
                       padding: const EdgeInsets.only(top: 28.0),
                       child: Column(
@@ -203,6 +265,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                                     weatherApiTokenController
                                                         .text,
                                                 tvMode: tvMode,
+                                                anime4kMode: anime4kMode,
                                               ),
                                             );
                                         BotToast.showSimpleNotification(
