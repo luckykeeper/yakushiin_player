@@ -12,15 +12,6 @@
 
 Update：以上页面可能不是最新，更新内容请见 Release Page
 
-## 新功能（1.0.2）
-
-- **相对音量**：每首歌曲支持网关侧配置 `volumeRatio`（以 100 为基准的相对音量），切歌时自动应用，彻底解决不同片源响度不一致的问题（未配置默认 100，不增不减）
-- **全局后台下载器**：歌单同步升级为全局后台任务，离开同步页 / 应用退后台都能继续下载；Android 端以前台服务（dataSync）+ 通知栏实时显示进度（按 1% 节流刷新）；单文件失败自动重试，连续失败会向网关复核歌单（歌曲被删除则跳过并计入统计）
-- **运行日志区域**：播放页底部新增实时日志区（最新在顶、最多 200 行、可选中复制），按级别染色——`DEBUG` 灰 / `INFO` 白 / `WARNING` 黄 / `ERROR` 红；同时接入 **mpv 内核日志**（`[mpv:级别][模块]` 格式），播放问题无需猜测，直接看内核报错；Release 构建下日志同样可用
-- **Anime4K 超分**：内置 [bloc97/Anime4K v4](https://github.com/bloc97/Anime4K) 全套 CNN 着色器，设置页只需选择「快速 / 高质量」档位，**A / B / C 模式根据视频分辨率自动切换**（≥1080p→A、720p→B、480p 及以下→C）；上采样目标为屏幕分辨率（总放大 ×4）；仅对动画风格视频有效，实拍内容可能出现伪影，默认关闭
-- **定位与天气健壮性**：PC 端位置服务未开启、权限被永久拒绝时自动停止 30 分钟定时重试（避免无意义轮询）；权限只是未授予时保持原有重试逻辑
-- **GitHub Actions 自动发版**：推送 `v*` 标签自动构建 **Windows / Android（正式签名 APK）/ Linux / macOS** 四平台并创建 Release；Android 签名密钥入库、密码通过仓库 Secret（`ANDROID_STORE_PASSWORD`）注入
-
 ## 使用
 
 和 [luckykeeper/OAPlayer](https://github.com/luckykeeper/OAPlayer) 一样，仍然需要自行实现后端（以及管理工具），后端和管理工具暂不开源，后端网关名字叫 [NoaHandler](https://blog.cocoa.xin/article/71/#架构设计) ，使用者需要自行实现该网关的部分功能（音乐管理模块），具体需要实现的部分介绍如下
@@ -57,7 +48,8 @@ type AppRequest struct {
 
 > 如果你和我一样喜欢用 xorm ，直接复制即可自动建表
 >
-> 在 `NoaPlayerV2Music` 里面，字幕相关的四个字段可空
+> 在 `NoaPlayerV2Music` 里面，字幕相关的四个字段可空；
+> `volumeRatio` 为相对音量增益，以 100 为基准（100 = 不增不减），未配置时客户端按 100 处理
 
 ```go
 type NoaPlayerV2Msg struct {
@@ -68,16 +60,17 @@ type NoaPlayerV2Msg struct {
 }
 
 type NoaPlayerV2Music struct {
-	ID            uint64 `json:"id" xorm:"pk autoincr 'id' comment('ID')"`
-	PlayListID    uint64 `json:"playListID" xorm:"'playListID' comment('播放列表ID')"`
-	VideoName     string `json:"videoName" xorm:"TEXT 'videoName' comment('视频名称')"`
-	VideoUrl      string `json:"videoUrl" xorm:"TEXT 'videoUrl' comment('视频链接')"`
-	VideoShareUrl string `json:"videoShareUrl" xorm:"TEXT 'videoShareUrl' comment('视频分享链接')"`
-	VideoMd5      string `json:"videoMd5" xorm:"TEXT 'videoMd5' comment('文件MD5')"`
-	SubTitleName  string `json:"subTitleName" xorm:"TEXT 'subTitleName' comment('字幕名称')"`
-	SubTitleUrl   string `json:"subTitleUrl" xorm:"TEXT 'subTitleUrl' comment('字幕链接')"`
-	SubTitleLang  string `json:"subTitleLang" xorm:"TEXT 'subTitleLang' comment('字幕语言')"`
-	SubTitleMd5   string `json:"subTitleMd5" xorm:"TEXT 'subTitleMd5' comment('字幕MD5')"`
+	ID            uint64  `json:"id" xorm:"pk autoincr 'id' comment('ID')"`
+	PlayListID    uint64  `json:"playListID" xorm:"'playListID' comment('播放列表ID')"`
+	VideoName     string  `json:"videoName" xorm:"TEXT 'videoName' comment('视频名称')"`
+	VideoUrl      string  `json:"videoUrl" xorm:"TEXT 'videoUrl' comment('视频链接')"`
+	VideoShareUrl string  `json:"videoShareUrl" xorm:"TEXT 'videoShareUrl' comment('视频分享链接')"`
+	VideoMd5      string  `json:"videoMd5" xorm:"TEXT 'videoMd5' comment('文件MD5')"`
+	SubTitleName  string  `json:"subTitleName" xorm:"TEXT 'subTitleName' comment('字幕名称')"`
+	SubTitleUrl   string  `json:"subTitleUrl" xorm:"TEXT 'subTitleUrl' comment('字幕链接')"`
+	SubTitleLang  string  `json:"subTitleLang" xorm:"TEXT 'subTitleLang' comment('字幕语言')"`
+	SubTitleMd5   string  `json:"subTitleMd5" xorm:"TEXT 'subTitleMd5' comment('字幕MD5')"`
+	VolumeRatio   float64 `json:"volumeRatio" xorm:"DOUBLE 'volumeRatio' comment('相对音量增益')"`
 }
 
 type NoaPlayerV2PlayList struct {
@@ -118,7 +111,8 @@ type NoaPlayerV2PlayList struct {
                     "subTitleName": "我是字幕文件标题",
                     "subTitleUrl": "我是字幕文件下载链接",
                     "subTitleLang": "我是字幕文件语言（示例：cn）",
-                    "subTitleMd5": "我是字幕文件 md5 值"
+                    "subTitleMd5": "我是字幕文件 md5 值",
+                    "volumeRatio": 100.0
                 },
                 {
                     "id": 2,
@@ -130,7 +124,8 @@ type NoaPlayerV2PlayList struct {
                     "subTitleName": "我是字幕文件标题",
                     "subTitleUrl": "我是字幕文件下载链接",
                     "subTitleLang": "我是字幕文件语言（示例：cn）",
-                    "subTitleMd5": "我是字幕文件 md5 值"
+                    "subTitleMd5": "我是字幕文件 md5 值",
+                    "volumeRatio": 100.0
                 }
             ]
         }
