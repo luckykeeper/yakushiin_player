@@ -13,6 +13,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+// Riverpod 3：StateProvider 移入 legacy 库（保持原有用法不变）
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:flutter_volume_controller/flutter_volume_controller.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:media_kit/media_kit.dart';
@@ -369,7 +371,23 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
   }
 
   // 根据当前设置档位与视频分辨率，应用/切换/清除 Anime4K 着色器
+  // 注意：mpv 的 glsl-shaders 列表分隔符 Windows 为 `;`，Unix 系（Android/Linux/macOS）为 `:`
   Future<void> _updateAnime4kShaders() async {
+    // mpv 的 glsl-shaders 是「路径列表」，列表分隔符随平台变化：
+    // 由路径分隔符推导——Windows（\）为 `;`，Unix 系（/）为 `:`
+    final listSeparator = Platform.pathSeparator == '\\' ? ";" : ":";
+    // 每次调用时读取设置档位（兼容旧版 A_HQ/B_HQ 等取值），保证进入页面/设置变更后即生效
+    final rawAnime4kMode =
+        yakushiinRuntimeEnvironment.dataEngineForGatewaySetting
+            .getAt(0)
+            ?.anime4kMode ??
+        "off";
+    _anime4kQuality =
+        rawAnime4kMode == "off"
+            ? "off"
+            : rawAnime4kMode.endsWith("Fast")
+            ? "Fast"
+            : "HQ";
     try {
       if (_anime4kQuality == "off") {
         if (_anime4kAppliedKey.isNotEmpty) {
@@ -402,7 +420,7 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
       if (dir == null) {
         return;
       }
-      final shaders = chain.map((s) => "$dir/$s").join(";");
+      final shaders = chain.map((s) => "$dir/$s").join(listSeparator);
       await (yakushiinPlayer.platform as NativePlayer).setProperty(
         "glsl-shaders",
         shaders,
@@ -416,6 +434,27 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
       yakushiinLogger.i("Anime4K 已切换：$statusText（视频高度 $height）");
     } catch (e) {
       yakushiinLogger.e("应用 Anime4K 着色器失败:$e");
+    }
+  }
+
+  // mpv 磁盘缓存是否已设置（只需设置一次，必须在首次 open 之前）
+  bool _mpvCacheFileApplied = false;
+
+  // 设置 mpv 磁盘缓存指向应用缓存目录，避免每个视频报 "Failed to create file cache"
+  Future<void> _ensureMpvCacheFile() async {
+    if (_mpvCacheFileApplied) {
+      return;
+    }
+    try {
+      final mpvCacheFile =
+          "${yakushiinRuntimeEnvironment.appCacheDirectory.path}${Platform.pathSeparator}mpv-cache.dump";
+      await (yakushiinPlayer.platform as NativePlayer).setProperty(
+        "cache-file",
+        mpvCacheFile,
+      );
+      _mpvCacheFileApplied = true;
+    } catch (e) {
+      yakushiinLogger.w("设置 mpv 磁盘缓存文件失败:$e");
     }
   }
 
@@ -500,30 +539,6 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
       if (Platform.isAndroid) {
         await _loadAndroidAudioStream();
       }
-      // mpv 磁盘缓存指向应用缓存目录，避免每个视频报 "Failed to create file cache"
-      try {
-        final mpvCacheFile =
-            "${yakushiinRuntimeEnvironment.appCacheDirectory.path}${Platform.pathSeparator}mpv-cache.dump";
-        await (yakushiinPlayer.platform as NativePlayer).setProperty(
-          "cache-file",
-          mpvCacheFile,
-        );
-      } catch (e) {
-        yakushiinLogger.w("设置 mpv 磁盘缓存文件失败:$e");
-      }
-      // 读取 Anime4K 设置档位（兼容旧版 A_HQ/B_HQ 等取值），按视频分辨率动态应用
-      final rawAnime4kMode =
-          yakushiinRuntimeEnvironment.dataEngineForGatewaySetting
-              .getAt(0)
-              ?.anime4kMode ??
-          "off";
-      _anime4kQuality =
-          rawAnime4kMode == "off"
-              ? "off"
-              : rawAnime4kMode.endsWith("Fast")
-              ? "Fast"
-              : "HQ";
-      await _updateAnime4kShaders();
     });
 
     // 电视模式配置
@@ -707,6 +722,8 @@ class _YakushiinPlayerPageState extends ConsumerState<YakushiinPlayerPage> {
         }
       }
 
+      // 首次打开播放列表前设置 mpv 磁盘缓存，确保首曲即生效
+      await _ensureMpvCacheFile();
       yakushiinPlayer.open(yakushiinPlayList);
       yakushiinPlayer.stream.playing.listen((bool playing) {
         if (mounted) {

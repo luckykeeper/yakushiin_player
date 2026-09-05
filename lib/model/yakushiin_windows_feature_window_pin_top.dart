@@ -25,7 +25,8 @@ class AlwaysOnTopNotifier extends AsyncNotifier<bool> {
   // 切换置顶状态
   Future<void> toggle() async {
     // 获取当前状态（如果尚未加载完成，默认为 false）
-    final current = state.valueOrNull ?? false;
+    // Riverpod 3：valueOrNull 已合并为 value（出错时返回 null 而非抛异常）
+    final current = state.value ?? false;
     // 设置为加载状态
     state = const AsyncValue.loading();
     try {

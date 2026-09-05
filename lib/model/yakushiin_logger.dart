@@ -12,6 +12,9 @@ import 'package:logger/logger.dart';
 import 'package:yakushiin_player/model/runtime.dart';
 
 var yakushiinLogger = Logger(
+  // 必须显式使用 ProductionFilter：默认的 DevelopmentFilter 在 Release 构建
+  // （无 assert）下会吞掉全部日志，导致运行日志区域与本地日志文件均为空
+  filter: ProductionFilter(),
   printer: PrettyPrinter(
     methodCount: 2,
     errorMethodCount: 8,

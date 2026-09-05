@@ -5,7 +5,8 @@
 // @Project       : yakushiin_player
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+// Riverpod 3：ChangeNotifierProvider 移入 legacy 库（保持原有用法不变）
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:yakushiin_player/model/gateway_associate/noa_player_v2_music.dart';
 
