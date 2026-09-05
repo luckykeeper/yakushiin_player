@@ -46,6 +46,12 @@ dependencies:
   flutter_local_notifications: ^22.3.0
   
 
+# 锁定回退：path_provider_android 2.3.1 的 Pigeon 通道在 release 构建下
+# 报 PlatformException(channel-error) 导致启动失败（debug 正常），已实测 2.2.19 正常。
+# 上游修复后可移除此覆盖。
+dependency_overrides:
+  path_provider_android: 2.2.19
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

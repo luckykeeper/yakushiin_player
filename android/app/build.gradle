@@ -55,6 +55,9 @@ android {
         release {
             // 有签名配置（key.properties + upload-keystore.jks）时用正式签名，否则回退 debug 签名
             signingConfig = keystorePropertiesFile.exists() ? signingConfigs.release : signingConfigs.debug
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 }
