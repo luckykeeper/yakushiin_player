@@ -12,6 +12,15 @@
 
 Update：以上页面可能不是最新，更新内容请见 Release Page
 
+## 新功能（1.0.2）
+
+- **相对音量**：每首歌曲支持网关侧配置 `volumeRatio`（以 100 为基准的相对音量），切歌时自动应用，彻底解决不同片源响度不一致的问题（未配置默认 100，不增不减）
+- **全局后台下载器**：歌单同步升级为全局后台任务，离开同步页 / 应用退后台都能继续下载；Android 端以前台服务（dataSync）+ 通知栏实时显示进度（按 1% 节流刷新）；单文件失败自动重试，连续失败会向网关复核歌单（歌曲被删除则跳过并计入统计）
+- **运行日志区域**：播放页底部新增实时日志区（最新在顶、最多 200 行、可选中复制），按级别染色——`DEBUG` 灰 / `INFO` 白 / `WARNING` 黄 / `ERROR` 红；同时接入 **mpv 内核日志**（`[mpv:级别][模块]` 格式），播放问题无需猜测，直接看内核报错；Release 构建下日志同样可用
+- **Anime4K 超分**：内置 [bloc97/Anime4K v4](https://github.com/bloc97/Anime4K) 全套 CNN 着色器，设置页只需选择「快速 / 高质量」档位，**A / B / C 模式根据视频分辨率自动切换**（≥1080p→A、720p→B、480p 及以下→C）；上采样目标为屏幕分辨率（总放大 ×4）；仅对动画风格视频有效，实拍内容可能出现伪影，默认关闭
+- **定位与天气健壮性**：PC 端位置服务未开启、权限被永久拒绝时自动停止 30 分钟定时重试（避免无意义轮询）；权限只是未授予时保持原有重试逻辑
+- **GitHub Actions 自动发版**：推送 `v*` 标签自动构建 **Windows / Android（正式签名 APK）/ Linux / macOS** 四平台并创建 Release；Android 签名密钥入库、密码通过仓库 Secret（`ANDROID_STORE_PASSWORD`）注入
+
 ## 使用
 
 和 [luckykeeper/OAPlayer](https://github.com/luckykeeper/OAPlayer) 一样，仍然需要自行实现后端（以及管理工具），后端和管理工具暂不开源，后端网关名字叫 [NoaHandler](https://blog.cocoa.xin/article/71/#架构设计) ，使用者需要自行实现该网关的部分功能（音乐管理模块），具体需要实现的部分介绍如下
@@ -179,11 +188,9 @@ type NoaPlayerV2PlayList struct {
 
 ### 4、最低支持的安卓版本
 
-最低 SDK 版本 21 (Android 5)
+最低 SDK 版本 24 (Android 7.0)
 
-目标 SDK 版本 35 (Android 15)
-
-NDK 版本 27      (Android 8.1)
+目标 SDK 版本 36 (Android 16)
 
 ## 其他
 
