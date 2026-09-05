@@ -50,3 +50,4 @@ app.*.map.json
 
 // Weather Api Key
 lib/model/weather_api_key.dart
+android/key.properties

@@ -1,7 +1,7 @@
 name: yakushiin_player
 description: "YakushiinPlayer By Luckykeeper"
 publish_to: 'none'
-version: 1.0.1+2
+version: 1.0.2+1
 
 environment:
 # dev_with: flutter 3.41.9 | vs2026

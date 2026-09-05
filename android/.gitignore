@@ -12,3 +12,5 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+# 例外：打包签名密钥按需入 git（密码在 android/key.properties，不入 git）
+!app/upload-keystore.jks

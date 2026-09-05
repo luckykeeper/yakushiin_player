@@ -1,0 +1,188 @@
+# YakushiinPlayer 自动发版
+# 触发：推送 v* 标签（如 v1.0.2）→ 构建 Windows/Android/Linux/macOS → 自动创建 GitHub Release 并附产物
+# 手动触发：workflow_dispatch（只构建，不发版）
+#
+# Android 签名说明：
+#   密钥文件 android/app/upload-keystore.jks 已入 git；
+#   密码需配置到仓库 Secrets：Settings → Secrets and variables → Actions →
+#   新增 Secret ANDROID_STORE_PASSWORD（取值见本地 android/key.properties，该文件不入 git）
+#   未配置 Secret 时回退 debug 签名（仅供测试）
+#
+# 说明：iOS 需要 Apple 开发者账号签名，不在本工作流范围；Web 未启用。
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build_windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.41.9
+          cache: true
+
+      - name: Get version from pubspec
+        id: ver
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path pubspec.yaml -Pattern '^version:\s*(.+)$').Matches[0].Groups[1].Value.Trim()
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Build Windows
+        run: flutter build windows --release
+
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path "build/windows/x64/runner/Release/*" -DestinationPath "yakushiin_player-${{ steps.ver.outputs.version }}-windows-x64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: yakushiin_player-*-windows-x64.zip
+          if-no-files-found: error
+
+  build_android:
+    name: Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.41.9
+          cache: true
+
+      - name: Setup signing (key.properties from Secrets)
+        env:
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_STORE_PASSWORD" ]; then
+            printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=upload\nstoreFile=upload-keystore.jks\n' "$ANDROID_STORE_PASSWORD" "$ANDROID_STORE_PASSWORD" > android/key.properties
+            echo "key.properties written (release signing)"
+          else
+            echo "ANDROID_STORE_PASSWORD secret not set; falling back to debug signing"
+          fi
+
+      - name: Get version from pubspec
+        id: ver
+        run: echo "version=$(grep '^version:' pubspec.yaml | sed 's/version:[[:space:]]*//' | cut -d'+' -f1 | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk "yakushiin_player-${{ steps.ver.outputs.version }}-android.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: yakushiin_player-*-android.apk
+          if-no-files-found: error
+
+  build_linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.41.9
+          cache: true
+
+      - name: Install build dependencies
+        run: sudo apt-get update -y && sudo apt-get install -y ninja-build libgtk-3-dev
+
+      - name: Get version from pubspec
+        id: ver
+        run: echo "version=$(grep '^version:' pubspec.yaml | sed 's/version:[[:space:]]*//' | cut -d'+' -f1 | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Build Linux
+        run: flutter build linux --release
+
+      - name: Package
+        run: tar -C build/linux/x64/release/bundle -czf "yakushiin_player-${{ steps.ver.outputs.version }}-linux-x64.tar.gz" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: yakushiin_player-*-linux-x64.tar.gz
+          if-no-files-found: error
+
+  build_macos:
+    name: macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.41.9
+          cache: true
+
+      - name: Get version from pubspec
+        id: ver
+        run: echo "version=$(grep '^version:' pubspec.yaml | sed 's/version:[[:space:]]*//' | cut -d'+' -f1 | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Build macOS
+        run: flutter build macos --release
+
+      - name: Package
+        run: |
+          cd build/macos/Build/Products/Release
+          zip -r -y "$GITHUB_WORKSPACE/yakushiin_player-${{ steps.ver.outputs.version }}-macos.zip" *.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: yakushiin_player-*-macos.zip
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: [build_windows, build_android, build_linux, build_macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
